@@ -20,6 +20,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'plot_
 from tornado.web import StaticFileHandler
 from tornado.web import RedirectHandler
 from tornado_handlers.download import DownloadHandler
+from tornado_handlers.bulk_upload import BulkUploadHandler
 from tornado_handlers.upload import UploadHandler
 from tornado_handlers.browse import BrowseHandler, BrowseDataRetrievalHandler
 from tornado_handlers.edit_entry import EditEntryHandler
@@ -112,6 +113,7 @@ set_log_id_is_filename(show_ulog_file)
 
 # additional request handlers
 extra_patterns = [
+    (r'/bulk_upload', BulkUploadHandler),
     (r'/upload', UploadHandler),
     (r'/browse', BrowseHandler),
     (r'/browse_data_retrieval', BrowseDataRetrievalHandler),
