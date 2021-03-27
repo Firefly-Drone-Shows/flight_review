@@ -13,3 +13,5 @@ data/img/*
 
 data/app_data
 data/certbot
+
+env/
