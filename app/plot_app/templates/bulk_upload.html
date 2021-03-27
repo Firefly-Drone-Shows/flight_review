@@ -1,0 +1,123 @@
+
+{% include 'header.html' %}
+
+<h3>Upload a Log File</h3>
+
+<p>
+Select and upload a log file for plotting and analysis.
+You can browse through all log files on <a href="/browse">this page</a>.
+</p>
+
+<p>
+	Log files will be accessible on the local intranet by the link provided. Additionally, you will be able to generate a randomized and secure external permalink on the log viewing page once uploaded.
+</p>
+
+
+
+<ul class="nav nav-tabs">
+	<li class="nav-item active">
+		<a class="nav-link active" data-toggle="tab" href="#individual">Individual</a>
+	</li>
+	<li class="nav-item">
+		<a class="nav-link" data-toggle="tab" href="#batch">Batch</a>
+	</li>
+</ul>
+
+<div class="tab-content">
+	<div id="individual" class="tab-pane in active">
+
+		<!-- Individual Tab -->
+		<table class="spaced">
+			<form enctype="multipart/form-data" action="/upload" method="post">
+				<tr>
+					<td></td><td>
+						<input type="hidden" name="type" value="personal">
+					</td>
+				</tr>
+				<tr>
+					<td class="left">Description <small>(optional)</small>:</td>
+					<td>
+						<textarea class="form-control" placeholder="" cols="20" rows="3" name="description" type="text"></textarea>
+					</td>
+				</tr>
+				<!--
+				<tr>
+				<td colspan="2">
+						<div class="custom-control custom-checkbox">
+							<input class="custom-control-input" name="obfuscated"
+							id="obfuscated" type="checkbox" value="true">
+							<label class="custom-control-label" for="obfuscated">
+							Obfuscate location information in the log.</label>
+						</div>
+				</td>
+				</tr>
+				-->
+				<tr>
+					<td class="left">ULog File:</td>
+					<td>
+						<input type="file" name="filearg" class="filestyle"
+							data-text="Choose File..."
+							data-btnClass="btn-outline-primary align-right"
+							>
+					</td>
+				</tr>
+				<tr>
+					<td></td><td><br/><input class="btn btn-primary align-right"
+						 id="upload-button" type="submit" value="Upload" /></td>
+				</tr>
+			</form>
+		</table>
+
+	</div>
+	<div id="batch" class="tab-pane fade">
+
+		<!-- Batch Tab -->
+		<table class="spaced">
+			<form enctype="multipart/form-data" action="/upload" method="post">
+				<tr>
+					<td></td><td>
+						<input type="hidden" name="type" value="personal">
+					</td>
+				</tr>
+				<tr>
+					<td class="left">Description: <br/><small>(optional, will be applied to all logs found in the upload)</small></td>
+					<td>
+						<textarea class="form-control" placeholder="" cols="20" rows="3" name="description" type="text"></textarea>
+					</td>
+				</tr>
+				<!--
+				<tr>
+				<td colspan="2">
+						<div class="custom-control custom-checkbox">
+							<input class="custom-control-input" name="obfuscated"
+							id="obfuscated" type="checkbox" value="true">
+							<label class="custom-control-label" for="obfuscated">
+							Obfuscate location information in the log.</label>
+						</div>
+				</td>
+				</tr>
+				-->
+				<tr>
+					<td class="left">Zip File: <br/><small>(all ULog files in the zip, regardless of folder structure, will be processed)</small></td>
+					<td>
+						<input type="file" name="filearg" class="filestyle"
+							data-text="Choose File..."
+							data-btnClass="btn-outline-primary align-right"
+							>
+					</td>
+				</tr>
+				<tr>
+					<td></td><td><br/><input class="btn btn-primary align-right"
+						 id="upload-button" type="submit" value="Upload" /></td>
+				</tr>
+			</form>
+		</table>
+
+	</div>
+</div>
+
+
+{% include 'footer.html' %}
+
+</body>
+</html>
