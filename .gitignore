@@ -22,3 +22,6 @@ data/certbot
 /.idea
 
 app/private_key/private_key.pem
+
+
+env/
