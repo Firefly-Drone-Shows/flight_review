@@ -97,6 +97,9 @@ server_kwargs['websocket_max_message_size'] = 100 * 1024 * 1024
 # increase the maximum upload size (default is 100MB)
 server_kwargs['http_server_kwargs'] = {'max_buffer_size': 300 * 1024 * 1024}
 
+# turn on debug mode
+server_kwargs['debug'] = True
+
 
 show_ulog_file = False
 show_3d_page = False
@@ -115,13 +118,13 @@ set_log_id_is_filename(show_ulog_file)
 # additional request handlers
 extra_patterns = [
     (r'/bulk_upload', BulkUploadHandler),
-    (r'/upload', UploadHandler),
+    (r'/upload', BulkUploadHandler),
     (r'/browse', BrowseHandler),
     (r'/browse_data_retrieval', BrowseDataRetrievalHandler),
     (r'/3d', ThreeDHandler),
     (r'/radio_controller', RadioControllerHandler),
     (r'/edit_entry', EditEntryHandler),
-    (r'/?', UploadHandler), #root should point to upload
+    (r'/?', BulkUploadHandler), #root should point to upload
     (r'/download', DownloadHandler),
     (r'/dbinfo', DBInfoHandler),
     (r'/error_label', UpdateErrorLabelHandler),

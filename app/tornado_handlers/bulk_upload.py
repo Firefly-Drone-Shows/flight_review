@@ -10,6 +10,8 @@ import sys
 import uuid
 import binascii
 import sqlite3
+import traceback
+import zipfile
 import tornado.web
 from tornado.ioloop import IOLoop
 
@@ -116,68 +118,155 @@ class BulkUploadHandler(TornadoRequestHandlerBase):
                      'allowForAnalysis', 'obfuscated', 'source', 'type',
                      'feedback', 'windSpeed', 'rating', 'videoUrl', 'public',
                      'vehicleName'])
+
                 description = escape(form_data['description'].decode("utf-8"))
-                email = form_data['email'].decode("utf-8")
-                upload_type = 'personal'
-                if 'type' in form_data:
-                    upload_type = form_data['type'].decode("utf-8")
-                source = 'webui'
+                email = form_data.get('email', bytes("(no email provided)", 'utf-8')).decode("utf-8")
+                upload_type = form_data.get('type', bytes("personal", 'utf-8')).decode("utf-8")
+                source = form_data.get('source', bytes("webui", 'utf-8')).decode("utf-8")
                 title = '' # may be used in future...
-                if 'source' in form_data:
-                    source = form_data['source'].decode("utf-8")
-                obfuscated = 0
-                if 'obfuscated' in form_data:
-                    if form_data['obfuscated'].decode("utf-8") == 'true':
-                        obfuscated = 1
-                allow_for_analysis = 0
-                if 'allowForAnalysis' in form_data:
-                    if form_data['allowForAnalysis'].decode("utf-8") == 'true':
-                        allow_for_analysis = 1
-                feedback = ''
-                if 'feedback' in form_data:
-                    feedback = escape(form_data['feedback'].decode("utf-8"))
+                obfuscated = {'true': 1, 'false': 0}.get(form_data.get('obfuscated', b'false').decode('utf-8'), 0)
+                allow_for_analysis = {'true': 1, 'false': 0}.get(form_data.get('allowForAnalysis', b'false').decode('utf-8'), 0)
+                feedback = escape(form_data.get('feedback', b'').decode("utf-8"))
+
                 wind_speed = -1
                 rating = ''
-                stored_email = ''
                 video_url = ''
-                is_public = 0
-                vehicle_name = ''
+                is_public = 1
+                vehicle_name = escape(form_data.get('vehicleName', bytes("", 'utf-8')).decode("utf-8"))
                 error_labels = ''
 
-                if upload_type == 'flightreport':
-                    try:
-                        wind_speed = int(escape(form_data['windSpeed'].decode("utf-8")))
-                    except ValueError:
-                        wind_speed = -1
-                    rating = escape(form_data['rating'].decode("utf-8"))
-                    if rating == 'notset': rating = ''
-                    stored_email = email
-                    # get video url & check if valid
-                    video_url = escape(form_data['videoUrl'].decode("utf-8"), quote=True)
-                    if not validate_url(video_url):
-                        video_url = ''
-                    if 'vehicleName' in form_data:
-                        vehicle_name = escape(form_data['vehicleName'].decode("utf-8"))
+                # we don't bother parsing any of the "flight report" metadata, it's not very useful to us
+                # stored_email = ''
+                # if upload_type == 'flightreport':
+                #     try:
+                #         wind_speed = int(escape(form_data['windSpeed'].decode("utf-8")))
+                #     except ValueError:
+                #         wind_speed = -1
+                #     rating = escape(form_data['rating'].decode("utf-8"))
+                #     if rating == 'notset': rating = ''
+                #     stored_email = email
+                #     # get video url & check if valid
+                #     video_url = escape(form_data['videoUrl'].decode("utf-8"), quote=True)
+                #     if not validate_url(video_url):
+                #         video_url = ''
+                #     if 'vehicleName' in form_data:
+                #         vehicle_name = escape(form_data['vehicleName'].decode("utf-8"))
 
-                    # always allow for statistical analysis
-                    allow_for_analysis = 1
-                    if 'public' in form_data:
-                        if form_data['public'].decode("utf-8") == 'true':
-                            is_public = 1
+                #     # always allow for statistical analysis
+                #     allow_for_analysis = 1
+                #     if 'public' in form_data:
+                #         if form_data['public'].decode("utf-8") == 'true':
+                #             is_public = 1
+
+                # open the database connection
+                con = sqlite3.connect(get_db_filename())
+                cur = con.cursor()
+
 
                 file_obj = self.multipart_streamer.get_parts_by_name('filearg')[0]
                 upload_file_name = file_obj.get_filename()
 
-                while True:
-                    log_id = str(uuid.uuid4())
-                    new_file_name = get_log_filename(log_id)
-                    if not os.path.exists(new_file_name):
-                        break
+                # read file header and ensure validity
+                peek_ulog_header = file_obj.get_payload_partial(len(ULog.HEADER_BYTES))
+                peek_zip_header = file_obj.get_payload_partial(4)
+                zip_headers = [b'\x50\x4b\x03\x04', b'\x50\x4b\x05\x06', b'\x50\x4b\x07\x08']
+                # we check that it is either a well formed zip or ULog
+                # is file a ULog? then continue as we were :)
+                if (peek_ulog_header == ULog.HEADER_BYTES):
+                    # generate a log ID and persistence filename
+                    while True:
+                        log_id = str(uuid.uuid4())
+                        new_file_name = get_log_filename(log_id)
+                        if not os.path.exists(new_file_name):
+                            break
+                    print('Moving uploaded file to', new_file_name)
+                    file_obj.move(new_file_name)
+                    # Load the ulog file but only if not uploaded via CI.
+                    ulog = None
+                    if source != 'CI':
+                        ulog_file_name = get_log_filename(log_id)
+                        ulog = load_ulog_file(ulog_file_name)
+                    # generate a token: secure random string (url-safe)
+                    token = str(binascii.hexlify(os.urandom(16)), 'ascii')
+                    # put additional data into a DB
+                    cur.execute(
+                        'insert into Logs (Id, Title, Description, '
+                        'OriginalFilename, Date, AllowForAnalysis, Obfuscated, '
+                        'Source, Email, WindSpeed, Rating, Feedback, Type, '
+                        'videoUrl, ErrorLabels, Public, Token) values '
+                        '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [log_id, title, description, upload_file_name,
+                        datetime.datetime.now(), allow_for_analysis,
+                        obfuscated, source, email, wind_speed, rating,
+                        feedback, upload_type, video_url, error_labels, is_public, token])
+                    if ulog is not None:
+                        vehicle_data = update_vehicle_db_entry(cur, ulog, log_id, vehicle_name)
+                        vehicle_name = vehicle_data.name
+                    con.commit()
+                    generate_db_data_from_log_file(log_id, con)
+                    con.commit()
 
-                # read file header & check if really an ULog file
-                header_len = len(ULog.HEADER_BYTES)
-                if (file_obj.get_payload_partial(header_len) !=
-                        ULog.HEADER_BYTES):
+
+                    # generate URL info and redirect
+                    url = '/plot_app?log='+log_id
+                    full_plot_url = get_http_protocol()+'://'+get_domain_name()+url
+                    print(full_plot_url)
+                    # do not redirect for QGC
+                    if source != 'QGroundControl':
+                        self.redirect(url)
+
+                # is the file a zip? read the magic numbers and unzip it
+                elif (peek_zip_header in zip_headers):
+                    with zipfile.ZipFile(file_obj.f_out) as zip:
+                        for log_filename in zip.namelist():
+                            # make sure we're dealing with a ulog file
+                            # TODO: do actual validation here, don't just check filename
+                            _, ext = os.path.splitext(log_filename)
+                            if ext not in ['.ulg', '.ulog']:
+                                print(f'Skipping extracting non-ULog file {file_obj.f_out.name}//{log_filename}')
+                                continue
+                            # generate a log ID and persistence filename
+                            while True:
+                                log_id = str(uuid.uuid4())
+                                new_file_name = get_log_filename(log_id)
+                                if not os.path.exists(new_file_name):
+                                    break
+                            # extract and rename the ulog file to something we control
+                            print(f'Extracting uploaded log {file_obj.f_out.name}//{log_filename} file to', new_file_name)
+                            zip.extract(log_filename, path = os.path.dirname(new_file_name))
+                            os.rename(os.path.join(os.path.dirname(new_file_name), log_filename), new_file_name)
+                            # Load the ulog file but only if not uploaded via CI.
+                            ulog = None
+                            if source != 'CI':
+                                ulog_file_name = get_log_filename(log_id)
+                                ulog = load_ulog_file(ulog_file_name)
+                            # generate a token: secure random string (url-safe)
+                            token = str(binascii.hexlify(os.urandom(16)), 'ascii')
+                            # put additional data into a DB
+                            cur.execute(
+                                'insert into Logs (Id, Title, Description, '
+                                'OriginalFilename, Date, AllowForAnalysis, Obfuscated, '
+                                'Source, Email, WindSpeed, Rating, Feedback, Type, '
+                                'videoUrl, ErrorLabels, Public, Token) values '
+                                '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                [log_id, title, description, upload_file_name,
+                                datetime.datetime.now(), allow_for_analysis,
+                                obfuscated, source, email, wind_speed, rating,
+                                feedback, upload_type, video_url, error_labels, is_public, token])
+                            if ulog is not None:
+                                vehicle_data = update_vehicle_db_entry(cur, ulog, log_id, vehicle_name)
+                                vehicle_name = vehicle_data.name
+                            con.commit()
+                            generate_db_data_from_log_file(log_id, con)
+                            con.commit()
+
+                            # generate URL info and redirect
+                            url = '/plot_app?log='+log_id
+                            full_plot_url = get_http_protocol()+'://'+get_domain_name()+url
+                            print(full_plot_url)
+                        self.redirect('/browse')
+                # is file neither a zip nor a ULog? error out :)
+                else:
                     if upload_file_name[-7:].lower() == '.px4log':
                         raise CustomHTTPError(
                             400,
@@ -186,120 +275,80 @@ class BulkUploadHandler(TornadoRequestHandlerBase):
                             'target="_blank">logs.uaventure.com</a>.')
                     raise CustomHTTPError(400, 'Invalid File')
 
-                print('Moving uploaded file to', new_file_name)
-                file_obj.move(new_file_name)
 
-                if obfuscated == 1:
-                    # TODO: randomize gps data, ...
-                    pass
 
-                # generate a token: secure random string (url-safe)
-                token = str(binascii.hexlify(os.urandom(16)), 'ascii')
 
-                # Load the ulog file but only if not uploaded via CI.
-                # Then we open the DB connection.
-                ulog = None
-                if source != 'CI':
-                    ulog_file_name = get_log_filename(log_id)
-                    ulog = load_ulog_file(ulog_file_name)
+                # this massive chunk of comment was the code used to send emails for 
+                # uploaded flight reports. we no longer use this functionality.
+                # however, for some weird reason, this chunk of code also generated a
+                # LogsGenerated entry for faster log loading for public logs. so 
+                # we move the line up and out of the code it's not supposed to be a part
+                # of, and put it right here :)
+                #generate_db_data_from_log_file(log_id, con)
 
-                # modify data for firefly before commit
-                is_public = 0
-
-                # put additional data into a DB
-                con = sqlite3.connect(get_db_filename())
-                cur = con.cursor()
-                cur.execute(
-                    'insert into Logs (Id, Title, Description, '
-                    'OriginalFilename, Date, AllowForAnalysis, Obfuscated, '
-                    'Source, Email, WindSpeed, Rating, Feedback, Type, '
-                    'videoUrl, ErrorLabels, Public, Token) values '
-                    '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [log_id, title, description, upload_file_name,
-                     datetime.datetime.now(), allow_for_analysis,
-                     obfuscated, source, stored_email, wind_speed, rating,
-                     feedback, upload_type, video_url, error_labels, is_public, token])
-
-                if ulog is not None:
-                    vehicle_data = update_vehicle_db_entry(cur, ulog, log_id, vehicle_name)
-                    vehicle_name = vehicle_data.name
-
-                con.commit()
-
-                url = '/plot_app?log='+log_id
-                full_plot_url = get_http_protocol()+'://'+get_domain_name()+url
-                print(full_plot_url)
-
-                delete_url = get_http_protocol()+'://'+get_domain_name()+ \
-                    '/edit_entry?action=delete&log='+log_id+'&token='+token
+                # delete_url = get_http_protocol()+'://'+get_domain_name()+ \
+                #     '/edit_entry?action=delete&log='+log_id+'&token='+token
 
                 # information for the notification email
-                info = {}
-                info['description'] = description
-                info['feedback'] = feedback
-                info['upload_filename'] = upload_file_name
-                info['type'] = ''
-                info['airframe'] = ''
-                info['hardware'] = ''
-                info['uuid'] = ''
-                info['software'] = ''
-                info['rating'] = rating
-                if len(vehicle_name) > 0:
-                    info['vehicle_name'] = vehicle_name
+                # info = {}
+                # info['description'] = description
+                # info['feedback'] = feedback
+                # info['upload_filename'] = upload_file_name
+                # info['type'] = ''
+                # info['airframe'] = ''
+                # info['hardware'] = ''
+                # info['uuid'] = ''
+                # info['software'] = ''
+                # info['rating'] = rating
+                # if len(vehicle_name) > 0:
+                #     info['vehicle_name'] = vehicle_name
 
-                if ulog is not None:
-                    px4_ulog = PX4ULog(ulog)
-                    info['type'] = px4_ulog.get_mav_type()
-                    airframe_name_tuple = get_airframe_name(ulog)
-                    if airframe_name_tuple is not None:
-                        airframe_name, airframe_id = airframe_name_tuple
-                        if len(airframe_name) == 0:
-                            info['airframe'] = airframe_id
-                        else:
-                            info['airframe'] = airframe_name
-                    sys_hardware = ''
-                    if 'ver_hw' in ulog.msg_info_dict:
-                        sys_hardware = escape(ulog.msg_info_dict['ver_hw'])
-                        info['hardware'] = sys_hardware
-                    if 'sys_uuid' in ulog.msg_info_dict and sys_hardware != 'SITL':
-                        info['uuid'] = escape(ulog.msg_info_dict['sys_uuid'])
-                    branch_info = ''
-                    if 'ver_sw_branch' in ulog.msg_info_dict:
-                        branch_info = ' (branch: '+ulog.msg_info_dict['ver_sw_branch']+')'
-                    if 'ver_sw' in ulog.msg_info_dict:
-                        ver_sw = escape(ulog.msg_info_dict['ver_sw'])
-                        info['software'] = ver_sw + branch_info
+                # if ulog is not None:
+                #     px4_ulog = PX4ULog(ulog)
+                #     info['type'] = px4_ulog.get_mav_type()
+                #     airframe_name_tuple = get_airframe_name(ulog)
+                #     if airframe_name_tuple is not None:
+                #         airframe_name, airframe_id = airframe_name_tuple
+                #         if len(airframe_name) == 0:
+                #             info['airframe'] = airframe_id
+                #         else:
+                #             info['airframe'] = airframe_name
+                #     sys_hardware = ''
+                #     if 'ver_hw' in ulog.msg_info_dict:
+                #         sys_hardware = escape(ulog.msg_info_dict['ver_hw'])
+                #         info['hardware'] = sys_hardware
+                #     if 'sys_uuid' in ulog.msg_info_dict and sys_hardware != 'SITL':
+                #         info['uuid'] = escape(ulog.msg_info_dict['sys_uuid'])
+                #     branch_info = ''
+                #     if 'ver_sw_branch' in ulog.msg_info_dict:
+                #         branch_info = ' (branch: '+ulog.msg_info_dict['ver_sw_branch']+')'
+                #     if 'ver_sw' in ulog.msg_info_dict:
+                #         ver_sw = escape(ulog.msg_info_dict['ver_sw'])
+                #         info['software'] = ver_sw + branch_info
 
 
-                if upload_type == 'flightreport' and is_public and source != 'CI':
-                    destinations = set(email_notifications_config['public_flightreport'])
-                    if rating in ['unsatisfactory', 'crash_sw_hw', 'crash_pilot']:
-                        destinations = destinations | \
-                            set(email_notifications_config['public_flightreport_bad'])
-                    send_flightreport_email(
-                        list(destinations),
-                        full_plot_url,
-                        DBData.rating_str_static(rating),
-                        DBData.wind_speed_str_static(wind_speed), delete_url,
-                        stored_email, info)
+                # if upload_type == 'flightreport' and is_public and source != 'CI':
+                #     destinations = set(email_notifications_config['public_flightreport'])
+                #     if rating in ['unsatisfactory', 'crash_sw_hw', 'crash_pilot']:
+                #         destinations = destinations | \
+                #             set(email_notifications_config['public_flightreport_bad'])
+                #     send_flightreport_email(
+                #         list(destinations),
+                #         full_plot_url,
+                #         DBData.rating_str_static(rating),
+                #         DBData.wind_speed_str_static(wind_speed), delete_url,
+                #         stored_email, info)
 
-                    # also generate the additional DB entry
-                    # (we may have the log already loaded in 'ulog', however the
-                    # lru cache will make it very quick to load it again)
-                    generate_db_data_from_log_file(log_id, con)
-                    # also generate the preview image
-                    IOLoop.instance().add_callback(generate_overview_img_from_id, log_id)
-
-                con.commit()
-                cur.close()
-                con.close()
+                #     # also generate the additional DB entry
+                #     # (we may have the log already loaded in 'ulog', however the
+                #     # lru cache will make it very quick to load it again)
+                #     generate_db_data_from_log_file(log_id, con)
+                #     # also generate the preview image
+                #     IOLoop.instance().add_callback(generate_overview_img_from_id, log_id)
 
                 # send notification emails
-                send_notification_email(email, full_plot_url, delete_url, info)
+                # send_notification_email(email, full_plot_url, delete_url, info)
 
-                # do not redirect for QGC
-                if source != 'QGroundControl':
-                    self.redirect(url)
 
             except CustomHTTPError:
                 raise
@@ -309,10 +358,15 @@ class BulkUploadHandler(TornadoRequestHandlerBase):
                     400,
                     'Failed to parse the file. It is most likely corrupt.') from e
             except Exception as e:
-                print('Error when handling POST data', sys.exc_info()[0],
+                print('Fatal error when handling POST data', sys.exc_info()[0],
                       sys.exc_info()[1])
+                traceback.print_exc()
                 raise CustomHTTPError(500) from e
 
             finally:
+                # close our DB connections
+                cur.close()
+                con.close()
+                # free the uploaded files
                 self.multipart_streamer.release_parts()
 
