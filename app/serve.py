@@ -8,6 +8,9 @@ import argparse
 import os
 import sys
 import errno
+import sqlite3
+import types
+import shutil
 
 from bokeh.application import Application
 from bokeh.server.server import Server
@@ -20,7 +23,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'plot_
 from tornado.web import StaticFileHandler
 from tornado.web import RedirectHandler
 from tornado_handlers.download import DownloadHandler
-from tornado_handlers.bulk_upload import BulkUploadHandler
+from tornado_handlers.bulk_upload import BulkUploadHandler, save_uploaded_log
 from tornado_handlers.upload import UploadHandler
 from tornado_handlers.browse import BrowseHandler, BrowseDataRetrievalHandler
 from tornado_handlers.edit_entry import EditEntryHandler
@@ -30,7 +33,7 @@ from tornado_handlers.radio_controller import RadioControllerHandler
 from tornado_handlers.error_labels import UpdateErrorLabelHandler
 
 from helper import set_log_id_is_filename, print_cache_info #pylint: disable=C0411
-from config import debug_print_timing, get_overview_img_filepath #pylint: disable=C0411
+from config import debug_print_timing, get_overview_img_filepath, get_db_filename #pylint: disable=C0411
 
 #pylint: disable=invalid-name
 
@@ -52,6 +55,8 @@ parser.add_argument('--use-xheaders', action='store_true',
 parser.add_argument('-f', '--file', metavar='file.ulg', action='store',
                     help='Directly show an ULog file, only for local use (implies -s)',
                     default=None)
+parser.add_argument('--bulk-upload', metavar='ULOGFOLDER', action='store', dest = 'bulkupload',
+                    help='Upload an entire folder of ULog files, then exit.')
 parser.add_argument('--3d', dest='threed', action='store_true',
                     help='Open 3D page (only if --file is provided)')
 parser.add_argument('--pid-analysis', dest='pid_analysis', action='store_true',
@@ -131,6 +136,48 @@ extra_patterns = [
     (r"/stats", RedirectHandler, {"url": "/plot_app?stats=1"}),
     (r'/overview_img/(.*)', StaticFileHandler, {'path': get_overview_img_filepath()}),
 ]
+
+# TODO: DON'T DO THIS
+def _move_file_monkeypatch(self, path):
+    shutil.copy(self.name, path)
+if args.bulkupload:
+    folder_path = os.path.abspath(args.bulkupload)
+    if os.path.isdir(folder_path):
+        con = sqlite3.connect(get_db_filename())
+        cur = con.cursor()
+        for filename in os.listdir(folder_path):
+            with open(os.path.join(folder_path, filename), 'r') as file:
+                # TODO: do actual validation here, don't just check filename
+                _, ext = os.path.splitext(filename)
+                if ext not in ['.ulg', '.ulog']:
+                    print(f'Skipping non-ULog file {folder_path}/{filename}')
+                    continue
+                # TODO: PLEASE don't do this, make save_uploaded_log work with real file-like objects
+                file.move = types.MethodType(_move_file_monkeypatch, file) 
+                file.get_filename = types.MethodType(lambda self: filename, file)
+                formdict = {}
+                formdict['description'] = ''
+                formdict['email'] = ''
+                formdict['upload_type'] = 'personal'
+                formdict['source'] = 'bulk'
+                formdict['title'] = ''
+                formdict['obfuscated'] = 0
+                formdict['allow_for_analysis'] = 1
+                formdict['feedback'] = ''
+                formdict['wind_speed'] = -1
+                formdict['rating'] = ''
+                formdict['video_url'] = ''
+                formdict['is_public'] = 1
+                formdict['vehicle_name'] = ''
+                formdict['error_labels'] = ''
+
+                log_id = save_uploaded_log(con, cur, file, formdict)
+                print('/plot_app?log='+log_id)
+        cur.close()
+        con.close()
+    else:
+        print(f"The path {folder_path} is not a directory.")
+    sys.exit(0)
 
 server = None
 custom_port = 5006

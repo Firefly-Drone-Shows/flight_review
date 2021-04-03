@@ -39,6 +39,53 @@ UPLOAD_TEMPLATE = 'bulk_upload.html'
 
 #pylint: disable=attribute-defined-outside-init,too-many-statements, unused-argument
 
+def save_uploaded_log(con,cur,ulog_file,formdict):
+    """
+    Save a log that's already persisted on the filesystem into the database and into a folder we control.
+    :param con: DB connection
+    :param cur: DB cursor
+    :param ulog_file: File-like object containing ULog
+    :param formdict: Dict of options passed from upload page
+    :param preserve_old_files: (Default False) Whether to leave the persisted copy on disk
+    :return log_id: ID of the newly saved ULog file
+    """
+    # generate a log ID and persistence filename
+    while True:
+        log_id = str(uuid.uuid4())
+        new_file_name = get_log_filename(log_id)
+        if not os.path.exists(new_file_name):
+            break
+    # if preserve_old_files:
+    #     print('Copying old file to', new_file_name)
+    #     ulog_file.copy(new_file_name)
+    # else:
+    print('Moving uploaded file to', new_file_name)
+    ulog_file.move(new_file_name)
+    # Load the ulog file but only if not uploaded via CI.
+    ulog = None
+    if formdict['source'] != 'CI':
+        ulog_file_name = get_log_filename(log_id)
+        ulog = load_ulog_file(ulog_file_name)
+    # generate a token: secure random string (url-safe)
+    token = str(binascii.hexlify(os.urandom(16)), 'ascii')
+    # put additional data into a DB
+    cur.execute(
+        'insert into Logs (Id, Title, Description, '
+        'OriginalFilename, Date, AllowForAnalysis, Obfuscated, '
+        'Source, Email, WindSpeed, Rating, Feedback, Type, '
+        'videoUrl, ErrorLabels, Public, Token) values '
+        '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [log_id, formdict['title'], formdict['description'], ulog_file.get_filename(),
+        datetime.datetime.now(), 1,
+        0, formdict['source'], formdict['email'], formdict['wind_speed'], formdict['rating'],
+        formdict['feedback'], formdict['upload_type'], formdict['video_url'], formdict['error_labels'], formdict['is_public'], token])
+    if ulog is not None:
+        vehicle_data = update_vehicle_db_entry(cur, ulog, log_id, formdict['vehicle_name'])
+        vehicle_name = vehicle_data.name
+    con.commit()
+    generate_db_data_from_log_file(log_id, con)
+    con.commit()
+    return log_id
 
 def update_vehicle_db_entry(cur, ulog, log_id, vehicle_name):
     """
@@ -135,6 +182,23 @@ class BulkUploadHandler(TornadoRequestHandlerBase):
                 vehicle_name = escape(form_data.get('vehicleName', bytes("", 'utf-8')).decode("utf-8"))
                 error_labels = ''
 
+                # TODO: make the format of formdict a little more compatible with form_data above
+                formdict = {}
+                formdict['description'] = description
+                formdict['email'] = email
+                formdict['upload_type'] = upload_type
+                formdict['source'] = source
+                formdict['title'] = title
+                formdict['obfuscated'] = obfuscated
+                formdict['allow_for_analysis'] = allow_for_analysis
+                formdict['feedback'] = feedback
+                formdict['wind_speed'] = wind_speed
+                formdict['rating'] = rating
+                formdict['video_url'] = video_url
+                formdict['is_public'] = is_public
+                formdict['vehicle_name'] = vehicle_name
+                formdict['error_labels'] = error_labels
+
                 # we don't bother parsing any of the "flight report" metadata, it's not very useful to us
                 # stored_email = ''
                 # if upload_type == 'flightreport':
@@ -173,38 +237,7 @@ class BulkUploadHandler(TornadoRequestHandlerBase):
                 # we check that it is either a well formed zip or ULog
                 # is file a ULog? then continue as we were :)
                 if (peek_ulog_header == ULog.HEADER_BYTES):
-                    # generate a log ID and persistence filename
-                    while True:
-                        log_id = str(uuid.uuid4())
-                        new_file_name = get_log_filename(log_id)
-                        if not os.path.exists(new_file_name):
-                            break
-                    print('Moving uploaded file to', new_file_name)
-                    file_obj.move(new_file_name)
-                    # Load the ulog file but only if not uploaded via CI.
-                    ulog = None
-                    if source != 'CI':
-                        ulog_file_name = get_log_filename(log_id)
-                        ulog = load_ulog_file(ulog_file_name)
-                    # generate a token: secure random string (url-safe)
-                    token = str(binascii.hexlify(os.urandom(16)), 'ascii')
-                    # put additional data into a DB
-                    cur.execute(
-                        'insert into Logs (Id, Title, Description, '
-                        'OriginalFilename, Date, AllowForAnalysis, Obfuscated, '
-                        'Source, Email, WindSpeed, Rating, Feedback, Type, '
-                        'videoUrl, ErrorLabels, Public, Token) values '
-                        '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        [log_id, title, description, upload_file_name,
-                        datetime.datetime.now(), allow_for_analysis,
-                        obfuscated, source, email, wind_speed, rating,
-                        feedback, upload_type, video_url, error_labels, is_public, token])
-                    if ulog is not None:
-                        vehicle_data = update_vehicle_db_entry(cur, ulog, log_id, vehicle_name)
-                        vehicle_name = vehicle_data.name
-                    con.commit()
-                    generate_db_data_from_log_file(log_id, con)
-                    con.commit()
+                    log_id = save_uploaded_log(con, cur, file_obj, formdict)
 
 
                     # generate URL info and redirect
@@ -225,6 +258,7 @@ class BulkUploadHandler(TornadoRequestHandlerBase):
                             if ext not in ['.ulg', '.ulog']:
                                 print(f'Skipping extracting non-ULog file {file_obj.f_out.name}//{log_filename}')
                                 continue
+                            # TODO: switch to save_uploaded_log
                             # generate a log ID and persistence filename
                             while True:
                                 log_id = str(uuid.uuid4())
