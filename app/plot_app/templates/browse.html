@@ -12,8 +12,15 @@
 
 </p>
 
+<!-- hack to wrap vehicle uuid --> 
+<style type="text/css">
+.table-final-column-wrap > tbody > tr > td:last-child {
+    overflow-wrap: break-word;
+    max-width: 3em;
+}
+</style>
 <table id="logs_table" style="border-collapse: collapse !important"
-    class="table table-sm table-striped table-bordered table-condensed">
+    class="table table-sm table-striped table-bordered table-condensed table-final-column-wrap">
     <thead>
         <tr>
             <th>#</th>
@@ -29,6 +36,7 @@
             <th>Rating</th>
             <th>Errors</th>
             <th>Flight Modes</th>
+            <th>Vehicle UUID</th>
         </tr>
     </thead>
     <tbody>
@@ -74,7 +82,8 @@
         { "width": "10%" }, /* start time */
         { "orderable": false, "width": "13%" }, /* rating */
         null,
-        { "orderable": false, "width": "11%" } /* flight modes */
+        { "orderable": false, "width": "11%" }, /* flight modes */
+        { "width": "10%" } /* vehicle uuid */
     ],
 
         "language": {

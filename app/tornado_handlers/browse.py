@@ -57,7 +57,8 @@ class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
                         'LogsGenerated.StartTime',
                         '',#Rating
                         'LogsGenerated.NumLoggedErrors',
-                        '' #FlightModes
+                        '', #FlightModes,
+                        'LogsGenerated.UUID'
                         ]
         if ordering_col[order_ind] != '':
             sql_order = ' ORDER BY ' + ordering_col[order_ind]
@@ -160,8 +161,8 @@ class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
             if db_data.ver_sw_release is not None:
                 search_only_columns.append(db_data.ver_sw_release)
 
-            if db_data.vehicle_uuid is not None:
-                search_only_columns.append(db_data.vehicle_uuid)
+            # if db_data.vehicle_uuid is not None:
+            #     search_only_columns.append(db_data.vehicle_uuid)
 
             image_col = '<div class="no_map_overview"> Not rendered / No GPS </div>'
             overview_image_filename = log_id+'.png'
@@ -182,7 +183,8 @@ class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
                 start_time_str,
                 db_data.rating_str(),
                 db_data.num_logged_errors,
-                flight_modes
+                flight_modes,
+                db_data.vehicle_uuid
             ], search_only_columns)
 
         # need to fetch all here, because we will do more SQL calls while
