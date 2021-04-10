@@ -155,7 +155,7 @@ if args.bulkupload:
                         continue
                     # TODO: PLEASE don't do this, make save_uploaded_log work with real file-like objects
                     file.move = types.MethodType(_move_file_monkeypatch, file) 
-                    file.get_filename = types.MethodType(lambda self: filename, file)
+                    file.get_filename = types.MethodType(lambda self: file_name, file)
                     formdict = {}
                     formdict['description'] = ''
                     formdict['email'] = ''
