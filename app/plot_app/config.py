@@ -38,7 +38,9 @@ __STORAGE_PATH = _conf.get('general', 'storage_path')
 if not os.path.isabs(__STORAGE_PATH):
     __STORAGE_PATH = os.path.join(_cur_dir, '..', __STORAGE_PATH)
 
-__LOG_FILE_PATH = os.path.join(__STORAGE_PATH, 'log_files')
+# __LOG_FILE_PATH = os.path.join(__STORAGE_PATH, 'log_files')
+# do a lil' hacking, put these files on our NAS drive
+__LOG_FILE_PATH = '/nas/log_files'
 __DB_FILENAME = os.path.join(__STORAGE_PATH, 'logs.sqlite')
 __CACHE_FILE_PATH = os.path.join(__STORAGE_PATH, 'cache')
 __AIRFRAMES_FILENAME = os.path.join(__CACHE_FILE_PATH, 'airframes.xml')
