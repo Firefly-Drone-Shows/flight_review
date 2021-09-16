@@ -139,14 +139,15 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         if data_plot.finalize() is not None:
             plots.append(data_plot.bokeh_plot)
 
-            # Leaflet Map
-            try:
-                pos_datas, flight_modes = ulog_to_polyline(ulog, flight_mode_changes)
-                curdoc().template_variables['pos_datas'] = pos_datas
-                curdoc().template_variables['pos_flight_modes'] = flight_modes
-            except:
-                pass
-            curdoc().template_variables['has_position_data'] = True
+    if any(elem.name == 'vehicle_gps_position' for elem in ulog.data_list):
+        # Leaflet Map
+        try:
+            pos_datas, flight_modes = ulog_to_polyline(ulog, flight_mode_changes)
+            curdoc().template_variables['pos_datas'] = pos_datas
+            curdoc().template_variables['pos_flight_modes'] = flight_modes
+        except:
+            pass
+        curdoc().template_variables['has_position_data'] = True
 
     # initialize parameter changes
     changed_params = None
@@ -320,6 +321,8 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                             colors8[2:5],
                             ['Roll Groundtruth', 'Pitch Groundtruth', 'Yaw Groundtruth'])
 
+        if data_plot.finalize() is not None: plots.append(data_plot)
+
         # Vision attitude rate
         data_plot = DataPlot(data, plot_config, 'vehicle_visual_odometry',
                              y_axis_label='[deg]', title='Visual Odometry Attitude Rate',
@@ -338,6 +341,18 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                             colors8[2:5],
                             ['Roll Rate Groundtruth', 'Pitch Rate Groundtruth',
                              'Yaw Rate Groundtruth'])
+
+        if data_plot.finalize() is not None: plots.append(data_plot)
+
+        # Vision latency
+        data_plot = DataPlot(data, plot_config, 'vehicle_visual_odometry',
+                             y_axis_label='[ms]', title='Visual Odometry Latency',
+                             plot_height='small', changed_params=changed_params,
+                             x_range=x_range)
+        data_plot.add_graph(
+            [lambda data: ('latency', 1e-3*(data['timestamp'] - data['timestamp_sample']))],
+            colors3, ['VIO Latency'], mark_nan=True)
+        plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
 
         if data_plot.finalize() is not None: plots.append(data_plot)
 
@@ -439,7 +454,7 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
 
     # actuator controls (Main) FFT (for filter & output noise analysis)
     data_plot = DataPlotFFT(data, plot_config, 'actuator_controls_0',
-                            title='Actuator Controls FFT')
+                            title='Actuator Controls FFT', y_range = Range1d(0, 0.01))
     data_plot.add_graph(['control[0]', 'control[1]', 'control[2]'],
                         colors3, ['Roll', 'Pitch', 'Yaw'])
     if not data_plot.had_error:
@@ -455,6 +470,44 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
             data_plot.mark_frequency(
                 ulog.initial_parameters['IMU_GYRO_CUTOFF'],
                 'IMU_GYRO_CUTOFF', 20)
+
+    if data_plot.finalize() is not None: plots.append(data_plot)
+
+
+    # angular_velocity FFT (for filter & output noise analysis)
+    data_plot = DataPlotFFT(data, plot_config, 'vehicle_angular_velocity',
+                            title='Angular Velocity FFT', y_range = Range1d(0, 0.01))
+    data_plot.add_graph(['xyz[0]', 'xyz[1]', 'xyz[2]'],
+                        colors3, ['Rollspeed', 'Pitchspeed', 'Yawspeed'])
+    if not data_plot.had_error:
+        if 'IMU_GYRO_CUTOFF' in ulog.initial_parameters:
+            data_plot.mark_frequency(
+                ulog.initial_parameters['IMU_GYRO_CUTOFF'],
+                'IMU_GYRO_CUTOFF', 20)
+        if 'IMU_GYRO_NF_FREQ' in ulog.initial_parameters:
+            if  ulog.initial_parameters['IMU_GYRO_NF_FREQ'] > 0:
+                data_plot.mark_frequency(
+                    ulog.initial_parameters['IMU_GYRO_NF_FREQ'],
+                    'IMU_GYRO_NF_FREQ', 70)
+
+    if data_plot.finalize() is not None: plots.append(data_plot)
+
+
+    # angular_acceleration FFT (for filter & output noise analysis)
+    data_plot = DataPlotFFT(data, plot_config, 'vehicle_angular_acceleration',
+                            title='Angular Acceleration FFT')
+    data_plot.add_graph(['xyz[0]', 'xyz[1]', 'xyz[2]'],
+                        colors3, ['Roll accel', 'Pitch accel', 'Yaw accel'])
+    if not data_plot.had_error:
+        if 'IMU_DGYRO_CUTOFF' in ulog.initial_parameters:
+            data_plot.mark_frequency(
+                ulog.initial_parameters['IMU_DGYRO_CUTOFF'],
+                'IMU_DGYRO_CUTOFF')
+        if 'IMU_GYRO_NF_FREQ' in ulog.initial_parameters:
+            if  ulog.initial_parameters['IMU_GYRO_NF_FREQ'] > 0:
+                data_plot.mark_frequency(
+                    ulog.initial_parameters['IMU_GYRO_NF_FREQ'],
+                    'IMU_GYRO_NF_FREQ', 70)
 
     if data_plot.finalize() is not None: plots.append(data_plot)
 
@@ -526,6 +579,28 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     data_plot.add_graph(['accelerometer_m_s2[0]', 'accelerometer_m_s2[1]', 'accelerometer_m_s2[2]'],
                         ['X', 'Y', 'Z'])
     if data_plot.finalize() is not None: plots.append(data_plot)
+
+
+    # Filtered Gyro (angular velocity) Spectrogram
+    data_plot = DataPlotSpec(data, plot_config, 'vehicle_angular_velocity',
+                             y_axis_label='[Hz]', title='Angular velocity Power Spectral Density',
+                             plot_height='small', x_range=x_range)
+    data_plot.add_graph(['xyz[0]', 'xyz[1]', 'xyz[2]'],
+                        ['rollspeed', 'pitchspeed', 'yawspeed'])
+
+    if data_plot.finalize() is not None: plots.append(data_plot)
+
+
+    # Filtered angular acceleration Spectrogram
+    data_plot = DataPlotSpec(data, plot_config, 'vehicle_angular_acceleration',
+                             y_axis_label='[Hz]',
+                             title='Angular acceleration Power Spectral Density',
+                             plot_height='small', x_range=x_range)
+    data_plot.add_graph(['xyz[0]', 'xyz[1]', 'xyz[2]'],
+                        ['roll accel', 'pitch accel', 'yaw accel'])
+
+    if data_plot.finalize() is not None: plots.append(data_plot)
+
 
     # raw angular speed
     data_plot = DataPlot(data, plot_config, 'sensor_combined',
@@ -852,7 +927,7 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
 
 
     # log messages
-    plots.append(get_logged_messages(ulog.logged_messages, plot_width))
+    plots.append(get_logged_messages(ulog, plot_width))
 
 
     # console messages, perf & top output
