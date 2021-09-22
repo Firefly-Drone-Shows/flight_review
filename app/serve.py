@@ -32,7 +32,7 @@ from tornado_handlers.three_d import ThreeDHandler
 from tornado_handlers.radio_controller import RadioControllerHandler
 from tornado_handlers.error_labels import UpdateErrorLabelHandler
 
-from helper import set_log_id_is_filename, print_cache_info #pylint: disable=C0411
+from helper import set_log_id_is_filename, print_cache_info, ULogException #pylint: disable=C0411
 from config import debug_print_timing, get_overview_img_filepath, get_db_filename #pylint: disable=C0411
 
 #pylint: disable=invalid-name
@@ -172,8 +172,11 @@ if args.bulkupload:
                     formdict['vehicle_name'] = ''
                     formdict['error_labels'] = ''
 
-                log_id = save_uploaded_log(con, cur, file, formdict)
-                print('/plot_app?log='+log_id)
+                try:
+                    log_id = save_uploaded_log(con, cur, file, formdict)
+                    print('/plot_app?log='+log_id)
+                except ULogException:
+                    print("ULog error caused by file "+file_path)
         cur.close()
         con.close()
     else:
