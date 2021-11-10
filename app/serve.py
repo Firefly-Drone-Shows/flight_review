@@ -142,45 +142,47 @@ def _move_file_monkeypatch(self, path):
 if args.bulkupload:
     folder_path = os.path.abspath(args.bulkupload)
     if os.path.isdir(folder_path):
-        con = sqlite3.connect(get_db_filename())
-        cur = con.cursor()
-        for root, dirs, files in os.walk(folder_path):
-            for file_name in files:
-                file_path = os.path.join(root, file_name)
-                with open(file_path, 'r') as file:
-                    # TODO: do actual validation here, don't just check filename
-                    _, ext = os.path.splitext(file_name)
-                    if ext not in ['.ulg', '.ulog']:
-                        print(f'Skipping non-ULog file {file_path}')
-                        continue
-                    # TODO: PLEASE don't do this, make save_uploaded_log work with real file-like objects
-                    file.move = types.MethodType(_move_file_monkeypatch, file) 
-                    file.get_filename = types.MethodType(lambda self: file_name, file)
-                    formdict = {}
-                    formdict['description'] = ''
-                    formdict['email'] = ''
-                    formdict['upload_type'] = 'personal'
-                    formdict['source'] = 'bulk'
-                    formdict['title'] = ''
-                    formdict['obfuscated'] = 0
-                    formdict['allow_for_analysis'] = 1
-                    formdict['feedback'] = ''
-                    formdict['wind_speed'] = -1
-                    formdict['rating'] = ''
-                    formdict['video_url'] = ''
-                    formdict['is_public'] = 1
-                    formdict['vehicle_name'] = ''
-                    formdict['error_labels'] = ''
-
+        folder_gen = os.walk(folder_path)
+    else:
+        folder_gen = [(os.path.dirname(folder_path), [], [os.path.basename(folder_path)])]
+    con = sqlite3.connect(get_db_filename())
+    cur = con.cursor()
+    print(f"folder gen: {list(folder_gen)}")
+    for root, dirs, files in folder_gen:
+        for file_name in files:
+            file_path = os.path.join(root, file_name)
+            with open(file_path, 'r') as file:
+                # TODO: do actual validation here, don't just check filename
+                _, ext = os.path.splitext(file_name)
+                if ext not in ['.ulg', '.ulog']:
+                    print(f'Skipping non-ULog file {file_path}')
+                    continue
+                # TODO: PLEASE don't do this, make save_uploaded_log work with real file-like objects
+                file.move = types.MethodType(_move_file_monkeypatch, file) 
+                file.get_filename = types.MethodType(lambda self: file_name, file)
+                formdict = {}
+                formdict['description'] = ''
+                formdict['email'] = ''
+                formdict['upload_type'] = 'personal'
+                formdict['source'] = 'bulk'
+                formdict['title'] = ''
+                formdict['obfuscated'] = 0
+                formdict['allow_for_analysis'] = 1
+                formdict['feedback'] = ''
+                formdict['wind_speed'] = -1
+                formdict['rating'] = ''
+                formdict['video_url'] = ''
+                formdict['is_public'] = 1
+                formdict['vehicle_name'] = ''
+                formdict['error_labels'] = ''
+                
                 try:
                     log_id = save_uploaded_log(con, cur, file, formdict)
                     print('/plot_app?log='+log_id)
                 except ULogException:
                     print("ULog error caused by file "+file_path)
-        cur.close()
-        con.close()
-    else:
-        print(f"The path {folder_path} is not a directory.")
+    cur.close()
+    con.close()
     sys.exit(0)
 
 server = None
