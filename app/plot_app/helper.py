@@ -321,7 +321,7 @@ def load_ulog_file(file_name):
                   'sensor_combined', 'cpuload',
                   'vehicle_gps_position', 'vehicle_local_position',
                   'vehicle_local_position_setpoint',
-                  'vehicle_global_position', 'actuator_controls_0',
+                  'vehicle_global_position', 'actuator_motors', 'actuator_controls_0',
                   'actuator_controls_1', 'actuator_outputs',
                   'vehicle_angular_velocity', 'vehicle_attitude', 'vehicle_attitude_setpoint',
                   'vehicle_rates_setpoint', 'rc_channels', 'input_rc',
