@@ -58,6 +58,8 @@ parser.add_argument('-f', '--file', metavar='file.ulg', action='store',
                     default=None)
 parser.add_argument('--bulk-upload', metavar='ULOGFOLDER', action='store', dest = 'bulkupload',
                     help='Upload an entire folder of ULog files, then exit.')
+parser.add_argument('--delete-after-bulk', action='store_true', dest = 'deleteafterbulk',
+                    help='Only useful in combination with --bulk-upload. Deletes the ulog file after successfully ingesting it.')
 parser.add_argument('--3d', dest='threed', action='store_true',
                     help='Open 3D page (only if --file is provided)')
 parser.add_argument('--pid-analysis', dest='pid_analysis', action='store_true',
@@ -153,6 +155,7 @@ if args.bulkupload:
     for root, dirs, files in folder_gen:
         for file_name in files:
             file_path = os.path.join(root, file_name)
+            successful_ingestion = False
             with open(file_path, 'r') as file:
                 # TODO: do actual validation here, don't just check filename
                 _, ext = os.path.splitext(file_name)
@@ -181,8 +184,12 @@ if args.bulkupload:
                 try:
                     log_id = save_uploaded_log(con, cur, file, formdict)
                     print('/plot_app?log='+log_id)
+                    successful_ingestion = True
                 except ULogException:
                     print("ULog error caused by file "+file_path)
+            if successful_ingestion and args.deleteafterbulk:
+                print('Successful ingestion! Deleting '+file_path)
+                os.remove(file_path)
     cur.close()
     con.close()
     sys.exit(0)
