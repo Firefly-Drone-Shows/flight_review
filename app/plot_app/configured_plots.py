@@ -523,6 +523,19 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
     if data_plot.finalize() is not None: plots.append(data_plot)
 
+    # Actuator Motors Outputs (Control Allocator)
+    data_plot = DataPlot(data, plot_config, 'actuator_motors',
+                            y_start=0, title="Actuator Motors", plot_height='small',
+                            changed_params=changed_params, x_range=x_range)
+    num_motor_outputs = 8
+    if data_plot.dataset:
+        data_plot.add_graph(['control['+str(i)+']' for i in range(num_motor_outputs)],
+                            [colors8[i % 8] for i in range(num_motor_outputs)],
+                            ['Control '+str(i) for i in range(num_motor_outputs)],
+                            mark_nan=True)
+    plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
+    if data_plot.finalize() is not None: plots.append(data_plot)
+
     actuator_output_plots = [(0, "Actuator Outputs (Main)"), (1, "Actuator Outputs (AUX)"),
                              (2, "Actuator Outputs (EXTRA)")]
     for topic_instance, plot_name in actuator_output_plots:
