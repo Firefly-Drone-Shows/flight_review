@@ -7,14 +7,14 @@ import os
 # load the config
 _conf = configparser.ConfigParser()
 _cur_dir = os.path.dirname(os.path.realpath(__file__))
-_conf.read_file(open(os.path.join(_cur_dir, '../config_default.ini')))
+_conf.read_file(open(os.path.join(_cur_dir, '../config_default.ini'), encoding='utf-8'))
 _user_config_file = os.path.join(_cur_dir, '../config_user.ini')
 _user_config_file_old = os.path.join(_cur_dir, '../../config_user.ini')
 if os.path.exists(_user_config_file_old) and not os.path.exists(_user_config_file):
     print('moving config file')
     os.rename(_user_config_file_old, _user_config_file)
 if os.path.exists(_user_config_file):
-    _conf.read_file(open(_user_config_file))
+    _conf.read_file(open(_user_config_file, encoding='utf-8'))
 
 email_config = dict(_conf.items('email'))
 
@@ -48,6 +48,7 @@ __AIRFRAMES_FILENAME = os.path.join(__CACHE_FILE_PATH, 'airframes.xml')
 __PARAMETERS_FILENAME = os.path.join(__CACHE_FILE_PATH, 'parameters.xml')
 __EVENTS_FILENAME = os.path.join(__CACHE_FILE_PATH, 'events.json.xz')
 __RELEASES_FILENAME = os.path.join(__CACHE_FILE_PATH, 'releases.json')
+__METADATA_CACHE_PATH = os.path.join(__CACHE_FILE_PATH, 'metadata')
 
 __PRINT_TIMING = int(_conf.get('debug', 'print_timing'))
 __VERBOSE_OUTPUT = int(_conf.get('debug', 'verbose_output'))
@@ -126,6 +127,10 @@ def get_events_url():
 def get_releases_filename():
     """ get configured releases file name """
     return __RELEASES_FILENAME
+
+def get_metadata_cache_path():
+    """ get configured metadata cache path """
+    return __METADATA_CACHE_PATH
 
 def get_parameters_filename():
     """ get configured parameters file name """

@@ -6,6 +6,7 @@ __pycache__
 *.sql
 
 /.ipynb_checkpoints
+/app/.ipynb_checkpoints
 
 /config_user.ini
 /app/config_user.ini
@@ -16,3 +17,5 @@ data/app_data
 data/certbot
 
 env/
+/.idea
+

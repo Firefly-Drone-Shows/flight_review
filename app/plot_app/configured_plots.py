@@ -17,6 +17,8 @@ from plotted_tables import (
     get_hardfault_html, get_corrupt_log_html
     )
 
+from vtol_tailsitter import *
+
 #pylint: disable=cell-var-from-loop, undefined-loop-variable,
 #pylint: disable=consider-using-enumerate,too-many-statements
 
@@ -30,12 +32,14 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     data = ulog.data_list
 
     # COMPATIBILITY support for old logs
-    if any(elem.name == 'vehicle_air_data' or elem.name == 'vehicle_magnetometer' for elem in data):
+    if any(elem.name in ('vehicle_air_data', 'vehicle_magnetometer') for elem in data):
         baro_alt_meter_topic = 'vehicle_air_data'
         magnetometer_ga_topic = 'vehicle_magnetometer'
     else: # old
         baro_alt_meter_topic = 'sensor_combined'
         magnetometer_ga_topic = 'sensor_combined'
+    manual_control_sp_controls = ['roll', 'pitch', 'yaw', 'throttle']
+    manual_control_sp_throttle_range = '[-1, 1]'
     for topic in data:
         if topic.name == 'system_power':
             # COMPATIBILITY: rename fields to new format
@@ -48,6 +52,10 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         if topic.name == 'tecs_status':
             if 'airspeed_sp' in topic.data: # old (prior to PX4-Autopilot/pull/16585)
                 topic.data['true_airspeed_sp'] = topic.data.pop('airspeed_sp')
+        if topic.name == 'manual_control_setpoint':
+            if 'throttle' not in topic.data: # old (prior to PX4-Autopilot/pull/15949)
+                manual_control_sp_controls = ['y', 'x', 'r', 'z']
+                manual_control_sp_throttle_range = '[0, 1]'
 
     if any(elem.name == 'vehicle_angular_velocity' for elem in data):
         rate_estimated_topic_name = 'vehicle_angular_velocity'
@@ -61,6 +69,10 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         manual_control_switches_topic = 'manual_control_switches'
     else: # old
         manual_control_switches_topic = 'manual_control_setpoint'
+    dynamic_control_alloc = any(elem.name in ('actuator_motors', 'actuator_servos')
+                                for elem in data)
+    actuator_controls_0 = ActuatorControls(ulog, dynamic_control_alloc, 0)
+    actuator_controls_1 = ActuatorControls(ulog, dynamic_control_alloc, 1)
 
     # initialize flight mode changes
     flight_mode_changes = get_flight_mode_changes(ulog)
@@ -68,10 +80,13 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     # VTOL state changes & vehicle type
     vtol_states = None
     is_vtol = False
+    is_vtol_tailsitter = False
     try:
         cur_dataset = ulog.get_dataset('vehicle_status')
         if np.amax(cur_dataset.data['is_vtol']) == 1:
             is_vtol = True
+            # check if is tailsitter
+            is_vtol_tailsitter = np.amax(cur_dataset.data['is_vtol_tailsitter']) == 1
             # find mode after transitions (states: 1=transition, 2=FW, 3=MC)
             if 'vehicle_type' in cur_dataset.data:
                 vehicle_type_field = 'vehicle_type'
@@ -174,26 +189,35 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     data_plot.change_dataset('position_setpoint_triplet')
     data_plot.add_circle(['current.alt'], [plot_config['mission_setpoint_color']],
                          ['Altitude Setpoint'])
-    data_plot.change_dataset('actuator_controls_0')
-    data_plot.add_graph([lambda data: ('thrust', data['control[3]']*100)],
-                        colors8[6:7], ['Thrust [0, 100]'])
+    data_plot.change_dataset(actuator_controls_0.thrust_sp_topic)
+    if actuator_controls_0.thrust_z_neg is not None:
+        data_plot.add_graph([lambda data: ('thrust', actuator_controls_0.thrust_z_neg*100)],
+                            colors8[6:7], ['Thrust [0, 100]'])
     plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
 
     if data_plot.finalize() is not None: plots.append(data_plot)
 
-
+    # VTOL tailistter orientation conversion, if relevant
+    if is_vtol_tailsitter:
+        [tailsitter_attitude, tailsitter_rates] = tailsitter_orientation(ulog, vtol_states)
 
     # Roll/Pitch/Yaw angle & angular rate
     for index, axis in enumerate(['roll', 'pitch', 'yaw']):
-
         # angle
         axis_name = axis.capitalize()
         data_plot = DataPlot(data, plot_config, 'vehicle_attitude',
                              y_axis_label='[deg]', title=axis_name+' Angle',
                              plot_height='small', changed_params=changed_params,
                              x_range=x_range)
-        data_plot.add_graph([lambda data: (axis, np.rad2deg(data[axis]))],
-                            colors3[0:1], [axis_name+' Estimated'], mark_nan=True)
+        if is_vtol_tailsitter:
+            if tailsitter_attitude[axis] is not None:
+                data_plot.add_graph([lambda data: (axis+'_q',
+                                                   np.rad2deg(tailsitter_attitude[axis]))],
+                                    colors3[0:1], [axis_name+' Estimated'], mark_nan=True)
+        else:
+            data_plot.add_graph([lambda data: (axis, np.rad2deg(data[axis]))],
+                                colors3[0:1], [axis_name+' Estimated'], mark_nan=True)
+
         data_plot.change_dataset('vehicle_attitude_setpoint')
         data_plot.add_graph([lambda data: (axis+'_d', np.rad2deg(data[axis+'_d']))],
                             colors3[1:2], [axis_name+' Setpoint'],
@@ -215,9 +239,15 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                              y_axis_label='[deg/s]', title=axis_name+' Angular Rate',
                              plot_height='small', changed_params=changed_params,
                              x_range=x_range)
-        data_plot.add_graph([lambda data: (axis+'speed',
-                                           np.rad2deg(data[rate_field_names[index]]))],
-                            colors3[0:1], [axis_name+' Rate Estimated'], mark_nan=True)
+        if is_vtol_tailsitter:
+            if tailsitter_rates[axis] is not None:
+                data_plot.add_graph([lambda data: (axis+'_q',
+                                                   np.rad2deg(tailsitter_rates[axis]))],
+                                    colors3[0:1], [axis_name+' Rate Estimated'], mark_nan=True)
+        else:
+            data_plot.add_graph([lambda data: (axis+'speed',
+                                               np.rad2deg(data[rate_field_names[index]]))],
+                                colors3[0:1], [axis_name+' Rate Estimated'], mark_nan=True)
         data_plot.change_dataset('vehicle_rates_setpoint')
         data_plot.add_graph([lambda data: (axis, np.rad2deg(data[axis]))],
                             colors3[1:2], [axis_name+' Rate Setpoint'],
@@ -407,9 +437,9 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                              title='Manual Control Inputs (Radio or Joystick)',
                              plot_height='small', y_range=Range1d(-1.1, 1.1),
                              changed_params=changed_params, x_range=x_range)
-        data_plot.add_graph(['y', 'x', 'r', 'z', 'aux1', 'aux2'], colors8[0:6],
-                            ['Y / Roll', 'X / Pitch', 'Yaw', 'Throttle [0, 1]',
-                             'Aux1', 'Aux2'])
+        data_plot.add_graph(manual_control_sp_controls + ['aux1', 'aux2'], colors8[0:6],
+                            ['Y / Roll', 'X / Pitch', 'Yaw',
+                             'Throttle ' + manual_control_sp_throttle_range, 'Aux1', 'Aux2'])
         data_plot.change_dataset(manual_control_switches_topic)
         data_plot.add_graph([lambda data: ('mode_slot', data['mode_slot']/6),
                              lambda data: ('kill_switch', data['kill_switch'] == 1)],
@@ -442,20 +472,27 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         if data_plot.finalize() is not None: plots.append(data_plot)
 
 
-
     # actuator controls 0
-    data_plot = DataPlot(data, plot_config, 'actuator_controls_0',
-                         y_start=0, title='Actuator Controls 0', plot_height='small',
-                         changed_params=changed_params, x_range=x_range)
-    data_plot.add_graph(['control[0]', 'control[1]', 'control[2]', 'control[3]'],
-                        colors8[0:4], ['Roll', 'Pitch', 'Yaw', 'Thrust'], mark_nan=True)
+    data_plot = DataPlot(data, plot_config, actuator_controls_0.torque_sp_topic,
+                         y_start=0, title='Actuator Controls',
+                         plot_height='small', changed_params=changed_params,
+                         x_range=x_range)
+    data_plot.add_graph(actuator_controls_0.torque_axes_field_names,
+                        colors8[0:3], ['Roll', 'Pitch', 'Yaw'], mark_nan=True)
+    data_plot.change_dataset(actuator_controls_0.thrust_sp_topic)
+    if actuator_controls_0.thrust_z_neg is not None:
+        data_plot.add_graph([lambda data: ('thrust', actuator_controls_0.thrust_z_neg)],
+                            colors8[3:4], ['Thrust (up)'], mark_nan=True)
+    if actuator_controls_0.thrust_x is not None:
+        data_plot.add_graph([lambda data: ('thrust', actuator_controls_0.thrust_x)],
+                            colors8[4:5], ['Thrust (forward)'], mark_nan=True)
     plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
     if data_plot.finalize() is not None: plots.append(data_plot)
 
     # actuator controls (Main) FFT (for filter & output noise analysis)
-    data_plot = DataPlotFFT(data, plot_config, 'actuator_controls_0',
+    data_plot = DataPlotFFT(data, plot_config, actuator_controls_0.torque_sp_topic,
                             title='Actuator Controls FFT', y_range = Range1d(0, 0.01))
-    data_plot.add_graph(['control[0]', 'control[1]', 'control[2]'],
+    data_plot.add_graph(actuator_controls_0.torque_axes_field_names,
                         colors3, ['Roll', 'Pitch', 'Yaw'])
     if not data_plot.had_error:
         if 'MC_DTERM_CUTOFF' in ulog.initial_parameters: # COMPATIBILITY
@@ -511,59 +548,79 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
 
     if data_plot.finalize() is not None: plots.append(data_plot)
 
-
-    # actuator controls 1
+    # actuator controls 1 (torque + thrust)
     # (only present on VTOL, Fixed-wing config)
-    data_plot = DataPlot(data, plot_config, 'actuator_controls_1',
+    data_plot = DataPlot(data, plot_config, actuator_controls_1.torque_sp_topic,
                          y_start=0, title='Actuator Controls 1 (VTOL in Fixed-Wing mode)',
-                         plot_height='small', changed_params=changed_params,
+                         plot_height='small', changed_params=changed_params, topic_instance=1,
                          x_range=x_range)
-    data_plot.add_graph(['control[0]', 'control[1]', 'control[2]', 'control[3]'],
-                        colors8[0:4], ['Roll', 'Pitch', 'Yaw', 'Thrust'], mark_nan=True)
+    data_plot.add_graph(actuator_controls_1.torque_axes_field_names,
+                        colors8[0:3], ['Roll', 'Pitch', 'Yaw'], mark_nan=True)
+    data_plot.change_dataset(actuator_controls_1.thrust_sp_topic,
+                             actuator_controls_1.topic_instance)
+    if actuator_controls_1.thrust_x is not None:
+        data_plot.add_graph([lambda data: ('thrust', actuator_controls_1.thrust_x)],
+                            colors8[3:4], ['Thrust (forward)'], mark_nan=True)
     plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
     if data_plot.finalize() is not None: plots.append(data_plot)
 
-    # Actuator Motors Outputs (Control Allocator)
-    data_plot = DataPlot(data, plot_config, 'actuator_motors',
-                            y_start=0, title="Actuator Motors", plot_height='small',
-                            changed_params=changed_params, x_range=x_range)
-    num_motor_outputs = 8
-    if data_plot.dataset:
-        data_plot.add_graph(['control['+str(i)+']' for i in range(num_motor_outputs)],
-                            [colors8[i % 8] for i in range(num_motor_outputs)],
-                            ['Control '+str(i) for i in range(num_motor_outputs)],
-                            mark_nan=True)
-    plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
-    if data_plot.finalize() is not None: plots.append(data_plot)
+    if dynamic_control_alloc:
 
-    actuator_output_plots = [(0, "Actuator Outputs (Main)"), (1, "Actuator Outputs (AUX)"),
-                             (2, "Actuator Outputs (EXTRA)")]
-    for topic_instance, plot_name in actuator_output_plots:
+        # actuator motors, actuator servos
+        actuator_output_plots = [("actuator_motors", "Motor"), ("actuator_servos", "Servo")]
+        for topic_name, plot_name in actuator_output_plots:
 
-        data_plot = DataPlot(data, plot_config, 'actuator_outputs',
-                             y_start=0, title=plot_name, plot_height='small',
-                             changed_params=changed_params, topic_instance=topic_instance,
-                             x_range=x_range)
-        num_actuator_outputs = 16
-        # only plot if at least one of the outputs is not constant
-        all_constant = True
-        if data_plot.dataset:
-            max_outputs = np.amax(data_plot.dataset.data['noutputs'])
-            if max_outputs < num_actuator_outputs: num_actuator_outputs = max_outputs
+            data_plot = DataPlot(data, plot_config, topic_name,
+                                 y_range=Range1d(-1, 1), title=plot_name+' Outputs',
+                                 plot_height='small', changed_params=changed_params,
+                                 x_range=x_range)
+            num_actuator_outputs = 8
+            if data_plot.dataset:
+                for i in range(num_actuator_outputs):
+                    output_data = data_plot.dataset.data['control['+str(i)+']']
+                    if np.isnan(output_data).all():
+                        num_actuator_outputs = i
+                        break
 
-            for i in range(num_actuator_outputs):
-                output_data = data_plot.dataset.data['output['+str(i)+']']
-                if not np.all(output_data == output_data[0]):
-                    all_constant = False
+                if num_actuator_outputs > 0:
+                    data_plot.add_graph(['control['+str(i)+']'
+                                         for i in range(num_actuator_outputs)],
+                                        [colors8[i % 8] for i in range(num_actuator_outputs)],
+                                        [plot_name+' '+str(i+1)
+                                         for i in range(num_actuator_outputs)])
+                    plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
+                    if data_plot.finalize() is not None: plots.append(data_plot)
 
-        if not all_constant:
-            data_plot.add_graph(['output['+str(i)+']' for i in range(num_actuator_outputs)],
-                                [colors8[i % 8] for i in range(num_actuator_outputs)],
-                                ['Output '+str(i) for i in range(num_actuator_outputs)],
-                                mark_nan=True)
-            plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
+    else:
 
-            if data_plot.finalize() is not None: plots.append(data_plot)
+        actuator_output_plots = [(0, "Actuator Outputs (Main)"), (1, "Actuator Outputs (AUX)"),
+                                 (2, "Actuator Outputs (EXTRA)")]
+        for topic_instance, plot_name in actuator_output_plots:
+
+            data_plot = DataPlot(data, plot_config, 'actuator_outputs',
+                                 y_start=0, title=plot_name, plot_height='small',
+                                 changed_params=changed_params, topic_instance=topic_instance,
+                                 x_range=x_range)
+            num_actuator_outputs = 16
+            # only plot if at least one of the outputs is not constant
+            all_constant = True
+            if data_plot.dataset:
+                max_outputs = np.amax(data_plot.dataset.data['noutputs'])
+                if max_outputs < num_actuator_outputs: num_actuator_outputs = max_outputs
+
+                for i in range(num_actuator_outputs):
+                    output_data = data_plot.dataset.data['output['+str(i)+']']
+                    if not np.all(output_data == output_data[0]):
+                        all_constant = False
+
+            if not all_constant:
+                data_plot.add_graph(['output['+str(i)+']' for i in range(num_actuator_outputs)],
+                                    [colors8[i % 8] for i in range(num_actuator_outputs)],
+                                    ['Output '+str(i) for i in range(num_actuator_outputs)],
+                                    mark_nan=True)
+                plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
+
+                if data_plot.finalize() is not None: plots.append(data_plot)
 
     # raw acceleration
     data_plot = DataPlot(data, plot_config, 'sensor_combined',
@@ -575,11 +632,11 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     if data_plot.finalize() is not None: plots.append(data_plot)
 
     # Vibration Metrics
-    data_plot = DataPlot(data, plot_config, 'estimator_status',
+    data_plot = DataPlot(data, plot_config, 'vehicle_imu_status',
                          title='Vibration Metrics',
                          plot_height='small', changed_params=changed_params,
                          x_range=x_range, y_start=0)
-    data_plot.add_graph(['vibe[2]'], colors3[2:3], ['Delta Velocity Vibration Level [m/s]'])
+    data_plot.add_graph(['accel_vibration_metric'], colors3[2:3], ['Accel Vibration Level [m/s^2]'])
     data_plot.add_horizontal_background_boxes(
         ['green', 'orange', 'red'], [0.02, 0.04])
 
@@ -735,13 +792,15 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                                           data['magnetometer_ga[1]']**2 +
                                           data['magnetometer_ga[2]']**2))],
         colors3[0:1], ['Norm of Magnetic Field'])
-    data_plot.change_dataset('actuator_controls_0')
-    data_plot.add_graph([lambda data: ('thrust', data['control[3]'])],
-                        colors3[1:2], ['Thrust'])
-    if is_vtol:
-        data_plot.change_dataset('actuator_controls_1')
-        data_plot.add_graph([lambda data: ('thrust', data['control[3]'])],
-                            colors3[2:3], ['Thrust (Fixed-wing)'])
+    data_plot.change_dataset(actuator_controls_0.thrust_sp_topic)
+    if actuator_controls_0.thrust is not None:
+        data_plot.add_graph([lambda data: ('thrust', actuator_controls_0.thrust)],
+                            colors3[1:2], ['Thrust'])
+    if is_vtol and not dynamic_control_alloc:
+        data_plot.change_dataset(actuator_controls_1.thrust_sp_topic)
+        if actuator_controls_1.thrust_x is not None:
+            data_plot.add_graph([lambda data: ('thrust', actuator_controls_1.thrust_x)],
+                                colors3[2:3], ['Thrust (Fixed-wing'])
     if data_plot.finalize() is not None: plots.append(data_plot)
 
 
@@ -782,13 +841,16 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     data_plot.change_dataset('airspeed')
     data_plot.add_graph(['air_temperature_celsius'], colors8[4:5],
                         ['Airspeed temperature'])
+    data_plot.change_dataset('battery_status')
+    data_plot.add_graph(['temperature'], colors8[6:7],
+                        ['Battery temperature'])
     if data_plot.finalize() is not None: plots.append(data_plot)
 
 
-    # estimator watchdog
+    # estimator flags
     try:
         data_plot = DataPlot(data, plot_config, 'estimator_status',
-                             y_start=0, title='Estimator Watchdog',
+                             y_start=0, title='Estimator Flags',
                              plot_height='small', changed_params=changed_params,
                              x_range=x_range)
         estimator_status = ulog.get_dataset('estimator_status').data
@@ -828,17 +890,35 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         print('Error in estimator plot: '+str(error))
 
 
+    # Failsafe flags
+    try:
+        data_plot = DataPlot(data, plot_config, 'vehicle_status',
+                             y_start=0, title='Failsafe Flags',
+                             plot_height='normal', changed_params=changed_params,
+                             x_range=x_range)
+        data_plot.add_graph(['failsafe', 'failsafe_and_user_took_over'], [colors8[0], colors8[1]],
+                            ['In Failsafe', 'User Took Over'])
+        num_graphs = 2
+        skip_if_always_set = ['auto_mission_missing', 'offboard_control_signal_lost']
 
-    # RC Quality
-    data_plot = DataPlot(data, plot_config, 'input_rc',
-                         title='RC Quality', plot_height='small', y_range=Range1d(0, 1),
-                         changed_params=changed_params, x_range=x_range)
-    data_plot.add_graph([lambda data: ('rssi', data['rssi']/100), 'rc_lost'],
-                        colors3[0:2], ['RSSI [0, 1]', 'RC Lost (Indicator)'])
-    data_plot.change_dataset('vehicle_status')
-    data_plot.add_graph(['rc_signal_lost'], colors3[2:3], ['RC Lost (Detected)'])
-    if data_plot.finalize() is not None: plots.append(data_plot)
-
+        data_plot.change_dataset('failsafe_flags')
+        if data_plot.dataset is not None:
+            failsafe_flags = data_plot.dataset.data
+            for failsafe_field in failsafe_flags:
+                if failsafe_field == 'timestamp' or failsafe_field.startswith('mode_req_'):
+                    continue
+                cur_data = failsafe_flags[failsafe_field]
+                # filter: show only the flags that are set at some point
+                if np.amax(cur_data) >= 1:
+                    if failsafe_field in skip_if_always_set and np.amin(cur_data) >= 1:
+                        continue
+                    data_plot.add_graph([failsafe_field], [colors8[num_graphs % 8]],
+                                        [failsafe_field.replace('_', ' ')])
+                    num_graphs += 1
+            plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
+            if data_plot.finalize() is not None: plots.append(data_plot)
+    except (KeyError, IndexError) as error:
+        print('Error in failsafe plot: '+str(error))
 
 
     # cpu load

@@ -1,6 +1,5 @@
 """ some helper methods that don't fit in elsewhere """
 import json
-import lzma
 from timeit import default_timer as timer
 import time
 import re
@@ -12,7 +11,6 @@ from urllib.request import urlretrieve
 import xml.etree.ElementTree # airframe parsing
 import shutil
 import uuid
-import numpy as np
 
 from pyulog import *
 from pyulog.px4 import *
@@ -21,11 +19,7 @@ from config_tables import *
 from config import get_log_filepath, get_airframes_filename, get_airframes_url, \
                    get_parameters_filename, get_parameters_url, \
                    get_log_cache_size, debug_print_timing, \
-                   get_releases_filename, get_events_url, get_events_filename
-
-#pylint: disable=wrong-import-position
-sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'libevents/libs/python'))
-from libevents_parse.parser import Parser
+                   get_releases_filename
 
 #pylint: disable=line-too-long, global-variable-not-assigned,invalid-name,global-statement
 
@@ -144,24 +138,6 @@ def get_airframe_data(airframe_id):
         __get_airframe_data.cache_clear()
     return __get_airframe_data(airframe_id)
 
-__event_parser = None
-def get_event_parser():
-    """ get event parser instance or None on error """
-    global __event_parser
-    events_json_xz = get_events_filename()
-    # check for cached file update
-    downloaded = download_file_maybe(events_json_xz, get_events_url())
-    if downloaded == 2 or (downloaded == 1 and __event_parser is None):
-        # decompress
-        with lzma.open(events_json_xz, 'rt') as f:
-            p = Parser()
-            p.load_definitions(json.load(f))
-            p.set_profile('dev')
-            __event_parser = p
-
-    return __event_parser
-
-
 def get_sw_releases():
     """ return a JSON object of public releases.
     Downloads releases from github if necessary. Returns None on error
@@ -169,7 +145,7 @@ def get_sw_releases():
 
     releases_json = get_releases_filename()
     if download_file_maybe(releases_json, 'https://api.github.com/repos/PX4/Firmware/releases') > 0:
-        with open(releases_json) as data_file:
+        with open(releases_json, encoding='utf-8') as data_file:
             return json.load(data_file)
     return None
 
@@ -324,7 +300,7 @@ def load_ulog_file(file_name):
                   'vehicle_global_position', 'actuator_motors', 'actuator_controls_0',
                   'actuator_controls_1', 'actuator_outputs',
                   'vehicle_angular_velocity', 'vehicle_attitude', 'vehicle_attitude_setpoint',
-                  'vehicle_rates_setpoint', 'rc_channels', 'input_rc',
+                  'vehicle_rates_setpoint', 'rc_channels',
                   'position_setpoint_triplet', 'vehicle_attitude_groundtruth',
                   'vehicle_local_position_groundtruth', 'vehicle_visual_odometry',
                   'vehicle_status', 'airspeed', 'airspeed_validated', 'manual_control_setpoint',
@@ -332,7 +308,10 @@ def load_ulog_file(file_name):
                   'vehicle_magnetometer', 'system_power', 'tecs_status',
                   'sensor_baro', 'sensor_accel', 'sensor_accel_fifo',
                   'sensor_gyro_fifo', 'vehicle_angular_acceleration',
-                  'ekf2_timestamps', 'manual_control_switches', 'event']
+                  'ekf2_timestamps', 'manual_control_switches', 'event',
+                  'vehicle_imu_status', 'actuator_motors', 'actuator_servos',
+                  'vehicle_thrust_setpoint', 'vehicle_torque_setpoint',
+                  'failsafe_flags']
     try:
         ulog = ULog(file_name, msg_filter, disable_str_exceptions=False)
     except FileNotFoundError:
@@ -355,6 +334,80 @@ def load_ulog_file(file_name):
 #            d.data = np.compress(non_zero_indices, d.data, axis=0)
 
     return ulog
+
+class ActuatorControls:
+    """
+        Compatibility for actuator control topics
+    """
+
+    def __init__(self, ulog, use_dynamic_control_alloc, instance=0):
+        self._thrust_x = None
+        self._thrust_z_neg = None
+        if use_dynamic_control_alloc:
+            self._topic_instance = instance
+            self._torque_sp_topic = 'vehicle_torque_setpoint'
+            self._thrust_sp_topic = 'vehicle_thrust_setpoint'
+            self._torque_axes_field_names = ['xyz[0]', 'xyz[1]', 'xyz[2]']
+            try:
+                # thrust is always instance 0
+                thrust_sp = ulog.get_dataset('vehicle_thrust_setpoint', 0)
+                self._thrust = np.sqrt(thrust_sp.data['xyz[0]']**2 + \
+                        thrust_sp.data['xyz[1]']**2 + thrust_sp.data['xyz[2]']**2)
+                self._thrust_x = thrust_sp.data['xyz[0]']
+                self._thrust_z_neg = -thrust_sp.data['xyz[2]']
+            except:
+                self._thrust = None
+        else:
+            self._topic_instance = 0
+            self._torque_sp_topic = 'actuator_controls_'+str(instance)
+            self._thrust_sp_topic = 'actuator_controls_'+str(instance)
+            self._torque_axes_field_names = ['control[0]', 'control[1]', 'control[2]']
+            try:
+                torque_sp = ulog.get_dataset(self._torque_sp_topic)
+                self._thrust = torque_sp.data['control[3]']
+                if instance == 0:
+                    # for FW this would be in X direction
+                    self._thrust_z_neg = torque_sp.data['control[3]']
+                else:
+                    self._thrust_x = torque_sp.data['control[3]']
+            except:
+                self._thrust = None
+
+    @property
+    def topic_instance(self):
+        """ get the topic instance """
+        return self._topic_instance
+
+    @property
+    def torque_sp_topic(self):
+        """ get the torque setpoint topic name """
+        return self._torque_sp_topic
+
+    @property
+    def thrust_sp_topic(self):
+        """ get the thrust setpoint topic name """
+        return self._thrust_sp_topic
+
+    @property
+    def torque_axes_field_names(self):
+        """ get the list of axes field names for roll, pitch and yaw """
+        return self._torque_axes_field_names
+
+    @property
+    def thrust(self):
+        """ get the thrust data (norm) """
+        return self._thrust
+
+    @property
+    def thrust_x(self):
+        """ get the thrust data in x dir """
+        return self._thrust_x
+
+    @property
+    def thrust_z_neg(self):
+        """ get the thrust data in -z dir """
+        return self._thrust_z_neg
+
 
 def get_airframe_name(ulog, multi_line=False):
     """
