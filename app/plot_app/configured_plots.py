@@ -827,6 +827,19 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
             data_plot.add_graph(['sensors3v3[0]'], colors8[5:6], ['3.3 V'])
     if data_plot.finalize() is not None: plots.append(data_plot)
 
+    # smart battery power
+    data_plot = DataPlot(data, plot_config, 'battery_status', topic_instance=1,
+                         y_start=0, title='Smart Battery Power',
+                         plot_height='small', changed_params=changed_params,
+                         x_range=x_range)
+    data_plot.add_graph(['voltage_v', 'voltage_filtered_v',
+                         'current_a', lambda data: ('discharged_mah', data['discharged_mah']/100),
+                         lambda data: ('remaining', data['remaining']*10)],
+                        colors8[::2]+colors8[1:2],
+                        ['Battery Voltage [V]', 'Battery Voltage filtered [V]',
+                         'Battery Current [A]', 'Discharged Amount [mAh / 100]',
+                         'Battery remaining [0=empty, 10=full]'])
+    if data_plot.finalize() is not None: plots.append(data_plot)
 
     #Temperature
     data_plot = DataPlot(data, plot_config, 'sensor_baro',
