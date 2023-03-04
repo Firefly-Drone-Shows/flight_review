@@ -895,13 +895,13 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                          y_start=0, title='Smart Battery Power',
                          plot_height='small', changed_params=changed_params,
                          x_range=x_range)
-    data_plot.add_graph(['voltage_v', 'voltage_filtered_v',
+    data_plot.add_graph(['voltage_v', 'temperature',
                          'current_a', lambda data: ('discharged_mah', data['discharged_mah']/100),
-                         lambda data: ('remaining', data['remaining']*10)],
+                         'average_time_to_empty'],
                         colors8[::2]+colors8[1:2],
-                        ['Battery Voltage [V]', 'Battery Voltage filtered [V]',
-                         'Battery Current [A]', 'Discharged Amount [mAh / 100]',
-                         'Battery remaining [0=empty, 10=full]'])
+                        ['Voltage [V]', 'Temperature',
+                         'Current [A]', 'Discharged Amount [mAh / 100]',
+                         'Avg time to empty'])
     if data_plot.finalize() is not None: plots.append(data_plot)
 
     #Temperature
