@@ -120,7 +120,7 @@ def get_info_table_html(ulog, px4_ulog, db_data, vehicle_data, vtol_states):
         branch_info = '<br> branch: '+ulog.msg_info_dict['ver_sw_branch']
     if 'ver_sw' in ulog.msg_info_dict:
         ver_sw = escape(ulog.msg_info_dict['ver_sw'])
-        ver_sw_link = 'https://github.com/PX4/Firmware/commit/'+ver_sw
+        ver_sw_link = 'https://github.com/Firefly-Drone-Shows/PX4-Autopilot/commit/'+ver_sw
         table_text_left.append(('Software Version', release_str +
                                 '<a href="'+ver_sw_link+'" target="_blank">'+ver_sw[:8]+'</a>'+
                                 release_str_suffix+branch_info))
