@@ -25,7 +25,7 @@ from config import get_db_filename, get_http_protocol, get_domain_name, \
 from helper import get_total_flight_time, validate_url, get_log_filename, \
     load_ulog_file, get_airframe_name, ULogException, decrypt_ulge_payload
 from overview_generator import generate_overview_img_from_id
-
+from .auth import AuthMixin
 
 #pylint: disable=relative-beyond-top-level
 from .common import get_jinja_env, CustomHTTPError, generate_db_data_from_log_file, \
@@ -78,7 +78,7 @@ def update_vehicle_db_entry(cur, ulog, log_id, vehicle_name):
 
 
 @tornado.web.stream_request_body
-class UploadHandler(TornadoRequestHandlerBase):
+class UploadHandler(AuthMixin, TornadoRequestHandlerBase):
     """ Upload log file Tornado request handler: handles page requests and POST
     data """
 
@@ -88,6 +88,7 @@ class UploadHandler(TornadoRequestHandlerBase):
 
     def prepare(self):
         """ called before a new request """
+        super.prepare()
         if self.request.method.upper() == 'POST':
             if 'expected_size' in self.request.arguments:
                 self.request.connection.set_max_body_size(

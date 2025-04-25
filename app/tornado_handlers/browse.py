@@ -12,6 +12,7 @@ import tornado.web
 
 # this is needed for the following imports
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), '../plot_app'))
+from .auth import AuthMixin
 from config import get_db_filename, get_overview_img_filepath
 from db_entry import DBData, DBDataGenerated
 from helper import flight_modes_table, get_airframe_data, html_long_word_force_break
@@ -23,7 +24,7 @@ BROWSE_TEMPLATE = 'browse.html'
 
 #pylint: disable=abstract-method
 
-class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
+class BrowseDataRetrievalHandler(AuthMixin, tornado.web.RequestHandler):
     """ Ajax data retrieval handler """
 
     def get(self, *args, **kwargs):
@@ -241,7 +242,7 @@ class DBDataJoin(DBData, DBDataGenerated):
         self.__dict__.update(source.__dict__)
 
 
-class BrowseHandler(tornado.web.RequestHandler):
+class BrowseHandler(AuthMixin, tornado.web.RequestHandler):
     """ Browse public log file Tornado request handler """
 
     def get(self, *args, **kwargs):

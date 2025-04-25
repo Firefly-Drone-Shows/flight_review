@@ -11,10 +11,10 @@ import errno
 import sqlite3
 import types
 import shutil
+import base64
 
 from bokeh.application import Application
-from bokeh.server.server import Server
-from bokeh.application.handlers import DirectoryHandler
+from bokeh.server.server import Server       
 
 
 
@@ -32,6 +32,8 @@ from tornado_handlers.three_d import ThreeDHandler
 from tornado_handlers.radio_controller import RadioControllerHandler
 from tornado_handlers.error_labels import UpdateErrorLabelHandler
 from tornado_handlers.nas_ingest import NASIngestHandler
+from tornado_handlers.auth import LoginHandler
+from tornado_handlers.auth import AuthenticatedDirectoryHandler as DirectoryHandler
 
 from helper import set_log_id_is_filename, print_cache_info, ULogException #pylint: disable=C0411
 from config import debug_print_timing, get_overview_img_filepath, get_db_filename #pylint: disable=C0411
@@ -108,6 +110,7 @@ server_kwargs['http_server_kwargs'] = {'max_buffer_size': 300 * 1024 * 1024}
 # turn on debug mode
 server_kwargs['debug'] = True
 
+server_kwargs['cookie_secret'] = base64.b64encode(os.urandom(32)).decode('utf-8')
 
 show_ulog_file = False
 show_3d_page = False
@@ -125,6 +128,7 @@ set_log_id_is_filename(show_ulog_file)
 
 # additional request handlers
 extra_patterns = [
+    (r'/login', LoginHandler),
     (r'/bulk_upload', BulkUploadHandler),
     (r'/upload', BulkUploadHandler),
     (r'/browse', BrowseHandler),
@@ -132,7 +136,7 @@ extra_patterns = [
     (r'/3d', ThreeDHandler),
     (r'/radio_controller', RadioControllerHandler),
     (r'/edit_entry', EditEntryHandler),
-    (r'/?', BulkUploadHandler), #root should point to upload
+    (r'/?', LoginHandler), #root points to basic login page
     (r'/download', DownloadHandler),
     (r'/dbinfo', DBInfoHandler),
     (r'/error_label', UpdateErrorLabelHandler),
@@ -221,7 +225,7 @@ if args.show:
             else:
                 server.show('/plot_app?log='+ulog_file)
         else:
-            server.show('/upload')
+            server.show('/login')
     server.io_loop.add_callback(show_callback)
 
 
