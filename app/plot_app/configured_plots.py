@@ -7,6 +7,7 @@ from bokeh.layouts import column
 from bokeh.models import Range1d
 from bokeh.models.widgets import Button
 from bokeh.io import curdoc
+from bokeh.models import Div
 
 from config import *
 from helper import *
@@ -903,6 +904,58 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                          'Current [A]', 'Discharged Amount [mAh / 100]',
                          'Avg time to empty'])
     if data_plot.finalize() is not None: plots.append(data_plot)
+
+    # battery status plot
+    battery_fields = [
+        ('max_cell_voltage_delta', 'Max Cell Voltage Delta'),
+        ('voltage_cell_v[0]', 'Cell Voltage 0'),
+        ('voltage_cell_v[1]', 'Cell Voltage 1'),
+        ('voltage_cell_v[2]', 'Cell Voltage 2'),
+    ]
+
+    # Try to get the battery_status dataset (instance 1)
+    dataset = None
+
+    try:
+        dataset = ulog.get_dataset('battery_status', 1).data
+    except Exception:
+        dataset = None
+
+    fields_to_plot = []
+    legends_to_plot = []
+    colors_to_plot = []
+
+    for idx, (field, legend) in enumerate(battery_fields):
+        if dataset and field in dataset:
+            fields_to_plot.append(field)
+            legends_to_plot.append(legend)
+            colors_to_plot.append(colors8[idx % len(colors8)])
+
+    # --- Main battery fields plot ---
+    if fields_to_plot:
+        data_plot = DataPlot(
+            data, plot_config, 'battery_status', topic_instance=1,
+            y_start=0, title='Cell Volatage Data',
+            plot_height='small', changed_params=changed_params,
+            x_range=x_range
+        )
+        data_plot.add_graph(fields_to_plot, colors_to_plot, legends_to_plot)
+        if data_plot.finalize() is not None:
+            plots.append(data_plot)
+    else:
+        plots.append(Div(text="<b>No battery status fields available in this log.</b>"))
+
+    # --- Cycle Count plot (separate) ---
+    if dataset and 'cycle_count' in dataset:
+        data_plot = DataPlot(
+            data, plot_config, 'battery_status', topic_instance=1,
+            y_start=0, title='Battery Cycle Count',
+            plot_height='small', changed_params=changed_params,
+            x_range=x_range
+        )
+        data_plot.add_graph(['cycle_count'], [colors8[4]], ['Cycle Count'])
+        if data_plot.finalize() is not None:
+            plots.append(data_plot)
 
     #Temperature
     data_plot = DataPlot(data, plot_config, 'sensor_baro',

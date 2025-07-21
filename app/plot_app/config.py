@@ -39,7 +39,7 @@ if not os.path.isabs(__STORAGE_PATH):
     __STORAGE_PATH = os.path.join(_cur_dir, '..', __STORAGE_PATH)
 
 __LOG_FILE_PATH = os.path.join(__STORAGE_PATH, 'log_files')
-__DB_FILENAME = os.path.join(__STORAGE_PATH, 'logs.sqlite')
+__DB_FILENAME = os.path.join(__STORAGE_PATH, 'logs_new.sqlite')
 __CACHE_FILE_PATH = os.path.join(__STORAGE_PATH, 'cache')
 __AIRFRAMES_FILENAME = os.path.join(__CACHE_FILE_PATH, 'airframes.xml')
 __PARAMETERS_FILENAME = os.path.join(__CACHE_FILE_PATH, 'parameters.xml')
