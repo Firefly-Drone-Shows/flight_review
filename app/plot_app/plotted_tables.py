@@ -120,7 +120,7 @@ def get_info_table_html(ulog, px4_ulog, db_data, vehicle_data, vtol_states):
         branch_info = '<br> branch: '+ulog.msg_info_dict['ver_sw_branch']
     if 'ver_sw' in ulog.msg_info_dict:
         ver_sw = escape(ulog.msg_info_dict['ver_sw'])
-        ver_sw_link = 'https://github.com/PX4/Firmware/commit/'+ver_sw
+        ver_sw_link = 'https://github.com/Firefly-Drone-Shows/PX4-Autopilot/commit/'+ver_sw
         table_text_left.append(('Software Version', release_str +
                                 '<a href="'+ver_sw_link+'" target="_blank">'+ver_sw[:8]+'</a>'+
                                 release_str_suffix+branch_info))
@@ -159,8 +159,8 @@ SDLOG_UTC_OFFSET: {}'''.format(utctimestamp.strftime('%d-%m-%Y %H:%M'), utc_offs
                 'title="'+tooltip+'" '
             table_text_left.append(
                 ('Logging Start '+
-                 '<i '+tooltip+' class="fa fa-question" aria-hidden="true" '+
-                 'style="font-size: larger; color:#666"></i>',
+                 '<i '+tooltip+' class="fa-solid fa-question" aria-hidden="true" '+
+                 'style="color:#666"></i>',
                  '<span style="display:none" id="logging-start-element">'+
                  str(logging_start_time)+'</span>'))
     except:
@@ -419,7 +419,7 @@ def get_hardfault_html(ulog):
     <p class="card-text">
         This log contains hardfault data from a software crash
         (see <a style="color:#fff; text-decoration: underline;"
-        href="https://docs.px4.io/master/en/debug/gdb_debugging.html#hard-fault-debugging">
+        href="https://docs.px4.io/main/en/debug/gdb_hardfault.html#hard-fault-debugging">
         here</a> how to debug).
         <br/>
         The hardfault data is shown below.
@@ -504,14 +504,15 @@ def get_changed_parameters(ulog, plot_width):
                 param_colors.append('black' if is_airframe_default else plot_color_red)
         except Exception as error:
             print(type(error), error)
-    param_data = dict(
-        names=param_names,
-        values=param_values,
-        defaults=param_defaults,
-        mins=param_mins,
-        maxs=param_maxs,
-        descriptions=param_descriptions,
-        colors=param_colors)
+    param_data = {
+        'names': param_names,
+        'values': param_values,
+        'defaults': param_defaults,
+        'mins': param_mins,
+        'maxs': param_maxs,
+        'descriptions': param_descriptions,
+        'colors': param_colors
+        }
     source = ColumnDataSource(param_data)
     formatter = HTMLTemplateFormatter(template='<font color="<%= colors %>"><%= value %></font>')
     columns = [
@@ -555,16 +556,17 @@ def get_logged_messages(ulog, plot_width):
         # in addition to an event with the same message so we can ignore those
         if m.message[-1] == '\t':
             continue
-        messages.append((m.timestamp, time_str(m.timestamp), m.log_level_str(), m.message))
+        messages.append((m.timestamp, m.log_level_str(), m.message))
 
     messages = sorted(messages, key=lambda m: m[0])
 
-    log_times, log_times_str, log_levels, log_messages = \
-        zip(*messages) if len(messages) > 0 else ([],[],[],[])
-    log_data = dict(
-        times=log_times_str,
-        levels=log_levels,
-        messages=log_messages)
+    log_times, log_levels, log_messages = zip(*messages) if len(messages) > 0 else ([],[],[])
+    log_times_str = [time_str(t) for t in log_times]
+    log_data = {
+        'times': log_times_str,
+        'levels': log_levels,
+        'messages': log_messages
+        }
     source = ColumnDataSource(log_data)
     columns = [
         TableColumn(field="times", title="Time",

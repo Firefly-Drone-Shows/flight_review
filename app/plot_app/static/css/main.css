@@ -19,16 +19,25 @@ body {
 h1 {
     margin: 2em 0 0 0;
     color: #2e484c;
-    font-family: 'Titillium Web', sans-serif;
+    font-family: 'Play', sans-serif;
     font-size: 23px;
-	font-weight: 700;
+    font-weight: 400;
     text-transform: uppercase;
 }
+h1 img {
+    vertical-align: top;
+}
 h1 .name {
-    color: #444;
-    font-size: 26px;
+    color: #e3e3e3;
+    font-size: 32px;
     text-transform: none;
-	padding-left: 3px;
+	padding-left: 8px;
+	padding-top: 15px;
+	display: inline-block;
+}
+
+.bg-blue {
+    background-color: #06465c !important;
 }
 
 /* bootstrap buttons */
@@ -36,19 +45,8 @@ h1 .name {
 	font-weight: 400;
 }
 
-/* navigation anchor links for plots */
-a.fragment {
-	position: absolute;
-	top: -14px;
-	left: -16px;
-	z-index: 100;
-}
-a.fragment:not(:hover) {
-	color: #a8a8a8;
-}
-
+/* upload page */
 table.spaced {
-	/* upload page */
 	margin: 16px 0;
 	width: 680px;
 }
@@ -94,20 +92,6 @@ pre {
     text-align: left;
 }
 
-
-/* bokeh plots */
-.bk-plot-layout {
-	/* spacing between plots */
-	margin-top: 12px;
-}
-.bk-grid-column {
-	/* adjust to changed spacing */
-	height: 100% !important;
-}
-/* bootstrap interferences */
-.bk-slick-header-column {
-	box-sizing: content-box;
-}
 
 /* override the bokeh font with the one used in the boostrap theme
  * (there's no option for that in theme.yaml)

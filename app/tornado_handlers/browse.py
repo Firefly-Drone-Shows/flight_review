@@ -12,6 +12,7 @@ import tornado.web
 
 # this is needed for the following imports
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), '../plot_app'))
+from .auth import AuthMixin
 from config import get_db_filename, get_overview_img_filepath
 from db_entry import DBData, DBDataGenerated
 from helper import flight_modes_table, get_airframe_data, html_long_word_force_break
@@ -23,7 +24,7 @@ BROWSE_TEMPLATE = 'browse.html'
 
 #pylint: disable=abstract-method
 
-class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
+class BrowseDataRetrievalHandler(AuthMixin, tornado.web.RequestHandler):
     """ Ajax data retrieval handler """
 
     def get(self, *args, **kwargs):
@@ -77,7 +78,7 @@ class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
         # pylint: disable=invalid-name
         Columns = collections.namedtuple("Columns", "columns search_only_columns")
 
-        def get_columns_from_tuple(db_tuple, counter):
+        def get_columns_from_tuple(db_tuple, counter, all_overview_imgs):
             """ load the columns (list of strings) from a db_tuple
             """
 
@@ -165,8 +166,8 @@ class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
             #     search_only_columns.append(db_data.vehicle_uuid)
 
             image_col = '<div class="no_map_overview"> Not rendered / No GPS </div>'
-            image_filename = os.path.join(get_overview_img_filepath(), log_id+'.png')
-            if os.path.exists(image_filename):
+            overview_image_filename = log_id+'.png'
+            if overview_image_filename in all_overview_imgs:
                 image_col = '<img class="map_overview" src="/overview_img/'
                 image_col += log_id+'.png" alt="Overview Image Load Failed" height=50/>'
 
@@ -196,13 +197,14 @@ class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
             data_length = len(db_tuples)
 
         filtered_counter = 0
+        all_overview_imgs = set(os.listdir(get_overview_img_filepath()))
         if search_str == '':
             # speed-up the request by iterating only over the requested items
             counter = data_start
             for i in range(data_start, min(data_start + data_length, len(db_tuples))):
                 counter += 1
 
-                columns = get_columns_from_tuple(db_tuples[i], counter)
+                columns = get_columns_from_tuple(db_tuples[i], counter, all_overview_imgs)
                 if columns is None:
                     continue
 
@@ -213,7 +215,7 @@ class BrowseDataRetrievalHandler(tornado.web.RequestHandler):
             for db_tuple in db_tuples:
                 counter += 1
 
-                columns = get_columns_from_tuple(db_tuple, counter)
+                columns = get_columns_from_tuple(db_tuple, counter, all_overview_imgs)
                 if columns is None:
                     continue
 
@@ -240,7 +242,7 @@ class DBDataJoin(DBData, DBDataGenerated):
         self.__dict__.update(source.__dict__)
 
 
-class BrowseHandler(tornado.web.RequestHandler):
+class BrowseHandler(AuthMixin, tornado.web.RequestHandler):
     """ Browse public log file Tornado request handler """
 
     def get(self, *args, **kwargs):

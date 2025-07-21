@@ -14,12 +14,18 @@ import uuid
 
 from pyulog import *
 from pyulog.px4 import *
+from scipy.interpolate import interp1d
 
 from config_tables import *
 from config import get_log_filepath, get_airframes_filename, get_airframes_url, \
                    get_parameters_filename, get_parameters_url, \
                    get_log_cache_size, debug_print_timing, \
                    get_releases_filename
+
+from Crypto.Cipher import ChaCha20
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP
+from Crypto.Hash import SHA256
 
 #pylint: disable=line-too-long, global-variable-not-assigned,invalid-name,global-statement
 
@@ -313,7 +319,7 @@ def load_ulog_file(file_name):
                   'vehicle_thrust_setpoint', 'vehicle_torque_setpoint',
                   'failsafe_flags']
     try:
-        ulog = ULog(file_name, msg_filter, disable_str_exceptions=False)
+        ulog = ULog(file_name, msg_filter, disable_str_exceptions=True)
     except FileNotFoundError:
         print("Error: file %s not found" % file_name)
         raise
@@ -355,6 +361,18 @@ class ActuatorControls:
                         thrust_sp.data['xyz[1]']**2 + thrust_sp.data['xyz[2]']**2)
                 self._thrust_x = thrust_sp.data['xyz[0]']
                 self._thrust_z_neg = -thrust_sp.data['xyz[2]']
+                if instance != 0: # We must resample thrust to the desired instance
+                    def _resample(time_array, data, desired_time):
+                        """ resample data at a given time to a vector of desired_time """
+                        data_f = interp1d(time_array, data, fill_value='extrapolate')
+                        return data_f(desired_time)
+                    thrust_sp_instance = ulog.get_dataset('vehicle_thrust_setpoint', instance)
+                    self._thrust = _resample(thrust_sp.data['timestamp'], self._thrust,
+                                             thrust_sp_instance.data['timestamp'])
+                    self._thrust_x = _resample(thrust_sp.data['timestamp'], self._thrust_x,
+                                               thrust_sp_instance.data['timestamp'])
+                    self._thrust_z_neg = _resample(thrust_sp.data['timestamp'], self._thrust_z_neg,
+                                                   thrust_sp_instance.data['timestamp'])
             except:
                 self._thrust = None
         else:
@@ -407,6 +425,21 @@ class ActuatorControls:
     def thrust_z_neg(self):
         """ get the thrust data in -z dir """
         return self._thrust_z_neg
+
+
+def get_lat_lon_alt_deg(ulog: ULog, vehicle_gps_position_dataset: ULog.Data):
+    """
+    Get (lat, lon, alt) tuple in degrees and altitude in meters
+    """
+    if ulog.msg_info_dict.get('ver_data_format', 0) >= 2:
+        lat = vehicle_gps_position_dataset.data['latitude_deg']
+        lon = vehicle_gps_position_dataset.data['longitude_deg']
+        alt = vehicle_gps_position_dataset.data['altitude_msl_m']
+    else: # COMPATIBILITY
+        lat = vehicle_gps_position_dataset.data['lat'] / 1e7
+        lon = vehicle_gps_position_dataset.data['lon'] / 1e7
+        alt = vehicle_gps_position_dataset.data['alt'] / 1e3
+    return lat, lon, alt
 
 
 def get_airframe_name(ulog, multi_line=False):
@@ -483,3 +516,37 @@ def validate_error_ids(err_ids):
             return False
 
     return True
+
+def decrypt_ulge_payload(payload: bytes, private_key_path: str) -> bytes:
+    """Decrypt an uploaded .ulge file payload and return decrypted .ulg bytes."""
+
+    if not os.path.exists(private_key_path):
+        raise FileNotFoundError(f"Private key not found at {private_key_path}")
+
+    magic = b"ULogEnc"
+    header_size = 22
+
+    if payload[:7] != magic:
+        raise ValueError("Invalid header magic")
+    if payload[7] != 1:
+        raise ValueError("Unsupported header version")
+    if payload[16] != 4:
+        raise ValueError("Unsupported key algorithm")
+
+    key_size = payload[19] << 8 | payload[18]
+    nonce_size = payload[21] << 8 | payload[20]
+
+    cipher_text = payload[header_size:header_size + key_size]
+    nonce = payload[header_size + key_size:header_size + key_size + nonce_size]
+    encrypted_data = payload[header_size + key_size + nonce_size:]
+
+    with open(private_key_path, 'rb') as f:
+        rsa_key = RSA.import_key(f.read())
+        cipher_rsa = PKCS1_OAEP.new(rsa_key, SHA256)
+        try:
+            sym_key = cipher_rsa.decrypt(cipher_text)
+        except ValueError as e:
+            raise ValueError("Decryption failed: possibly incorrect private key or corrupt file.") from e
+
+    cipher = ChaCha20.new(key=sym_key, nonce=nonce)
+    return cipher.decrypt(encrypted_data)

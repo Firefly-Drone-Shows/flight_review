@@ -32,7 +32,7 @@ from .common import get_jinja_env, CustomHTTPError, generate_db_data_from_log_fi
     TornadoRequestHandlerBase
 from .send_email import send_notification_email, send_flightreport_email
 from .multipart_streamer import MultiPartStreamer
-
+from.auth import AuthMixin
 
 UPLOAD_TEMPLATE = 'bulk_upload.html'
 
@@ -125,7 +125,7 @@ def update_vehicle_db_entry(cur, ulog, log_id, vehicle_name):
 
 
 @tornado.web.stream_request_body
-class BulkUploadHandler(TornadoRequestHandlerBase):
+class BulkUploadHandler(AuthMixin, TornadoRequestHandlerBase):
     """ Upload log file Tornado request handler: handles page requests and POST
     data """
 
@@ -135,6 +135,7 @@ class BulkUploadHandler(TornadoRequestHandlerBase):
 
     def prepare(self):
         """ called before a new request """
+        super().prepare()
         if self.request.method.upper() == 'POST':
             if 'expected_size' in self.request.arguments:
                 self.request.connection.set_max_body_size(

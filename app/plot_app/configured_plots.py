@@ -1,11 +1,13 @@
 """ This contains the list of all drawn plots on the log plotting page """
 
+import re
 from html import escape
 
 from bokeh.layouts import column
 from bokeh.models import Range1d
 from bokeh.models.widgets import Button
 from bokeh.io import curdoc
+from bokeh.models import Div
 
 from config import *
 from helper import *
@@ -40,6 +42,7 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         magnetometer_ga_topic = 'sensor_combined'
     manual_control_sp_controls = ['roll', 'pitch', 'yaw', 'throttle']
     manual_control_sp_throttle_range = '[-1, 1]'
+    vehicle_gps_position_altitude = None
     for topic in data:
         if topic.name == 'system_power':
             # COMPATIBILITY: rename fields to new format
@@ -49,13 +52,18 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                 topic.data['sensors3v3[0]'] = topic.data.pop('voltage3V3_v')
             if 'voltage3v3_v' in topic.data:
                 topic.data['sensors3v3[0]'] = topic.data.pop('voltage3v3_v')
-        if topic.name == 'tecs_status':
+        elif topic.name == 'tecs_status':
             if 'airspeed_sp' in topic.data: # old (prior to PX4-Autopilot/pull/16585)
                 topic.data['true_airspeed_sp'] = topic.data.pop('airspeed_sp')
-        if topic.name == 'manual_control_setpoint':
+        elif topic.name == 'manual_control_setpoint':
             if 'throttle' not in topic.data: # old (prior to PX4-Autopilot/pull/15949)
                 manual_control_sp_controls = ['y', 'x', 'r', 'z']
                 manual_control_sp_throttle_range = '[0, 1]'
+        elif topic.name == 'vehicle_gps_position':
+            if ulog.msg_info_dict.get('ver_data_format', 0) >= 2:
+                vehicle_gps_position_altitude = topic.data['altitude_msl_m']
+            else: # COMPATIBILITY
+                vehicle_gps_position_altitude = topic.data['alt'] * 0.001
 
     if any(elem.name == 'vehicle_angular_velocity' for elem in data):
         rate_estimated_topic_name = 'vehicle_angular_velocity'
@@ -86,7 +94,8 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         if np.amax(cur_dataset.data['is_vtol']) == 1:
             is_vtol = True
             # check if is tailsitter
-            is_vtol_tailsitter = np.amax(cur_dataset.data['is_vtol_tailsitter']) == 1
+            is_vtol_tailsitter = ('is_vtol_tailsitter' in cur_dataset.data and
+                                  np.amax(cur_dataset.data['is_vtol_tailsitter']) == 1)
             # find mode after transitions (states: 1=transition, 2=FW, 3=MC)
             if 'vehicle_type' in cur_dataset.data:
                 vehicle_type_field = 'vehicle_type'
@@ -180,26 +189,23 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     data_plot = DataPlot(data, plot_config, 'vehicle_gps_position',
                          y_axis_label='[m]', title='Altitude Estimate',
                          changed_params=changed_params, x_range=x_range)
-    data_plot.add_graph([lambda data: ('alt', data['alt']*0.001)],
-                        colors8[0:1], ['GPS Altitude'])
+    data_plot.add_graph([lambda data: ('alt', vehicle_gps_position_altitude)],
+                        colors8[0:1], ['GPS Altitude (MSL)'])
     data_plot.change_dataset(baro_alt_meter_topic)
     data_plot.add_graph(['baro_alt_meter'], colors8[1:2], ['Barometer Altitude'])
     data_plot.change_dataset('vehicle_global_position')
     data_plot.add_graph(['alt'], colors8[2:3], ['Fused Altitude Estimation'])
     data_plot.change_dataset('position_setpoint_triplet')
     data_plot.add_circle(['current.alt'], [plot_config['mission_setpoint_color']],
-                         ['Altitude Setpoint'])
-    data_plot.change_dataset(actuator_controls_0.thrust_sp_topic)
-    if actuator_controls_0.thrust_z_neg is not None:
-        data_plot.add_graph([lambda data: ('thrust', actuator_controls_0.thrust_z_neg*100)],
-                            colors8[6:7], ['Thrust [0, 100]'])
+                        ['Altitude Setpoint'])
     plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
 
     if data_plot.finalize() is not None: plots.append(data_plot)
 
     # VTOL tailistter orientation conversion, if relevant
     if is_vtol_tailsitter:
-        [tailsitter_attitude, tailsitter_rates] = tailsitter_orientation(ulog, vtol_states)
+        [tailsitter_attitude, tailsitter_rates, tailsitter_rates_setpoint] = tailsitter_orientation(
+            ulog, vtol_states)
 
     # Roll/Pitch/Yaw angle & angular rate
     for index, axis in enumerate(['roll', 'pitch', 'yaw']):
@@ -242,16 +248,21 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
         if is_vtol_tailsitter:
             if tailsitter_rates[axis] is not None:
                 data_plot.add_graph([lambda data: (axis+'_q',
-                                                   np.rad2deg(tailsitter_rates[axis]))],
-                                    colors3[0:1], [axis_name+' Rate Estimated'], mark_nan=True)
+                                np.rad2deg(tailsitter_rates[axis]))],
+                                colors3[0:1], [axis_name+' Rate Estimated'], mark_nan=True)
+                data_plot.change_dataset('vehicle_rates_setpoint')
+                data_plot.add_graph([lambda data: (axis, np.rad2deg(
+                                tailsitter_rates_setpoint[axis]))],
+                                colors3[1:2], [axis_name+' Rate Setpoint'],
+                                mark_nan=True, use_step_lines=True)
         else:
             data_plot.add_graph([lambda data: (axis+'speed',
                                                np.rad2deg(data[rate_field_names[index]]))],
                                 colors3[0:1], [axis_name+' Rate Estimated'], mark_nan=True)
-        data_plot.change_dataset('vehicle_rates_setpoint')
-        data_plot.add_graph([lambda data: (axis, np.rad2deg(data[axis]))],
-                            colors3[1:2], [axis_name+' Rate Setpoint'],
-                            mark_nan=True, use_step_lines=True)
+            data_plot.change_dataset('vehicle_rates_setpoint')
+            data_plot.add_graph([lambda data: (axis, np.rad2deg(data[axis]))],
+                                colors3[1:2], [axis_name+' Rate Setpoint'],
+                                mark_nan=True, use_step_lines=True)
         axis_letter = axis[0].upper()
         rate_int_limit = '(*100)'
         # this param is MC/VTOL only (it will not exist on FW)
@@ -456,8 +467,7 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                              changed_params=changed_params, x_range=x_range)
         num_rc_channels = 8
         if data_plot.dataset:
-            max_channels = np.amax(data_plot.dataset.data['channel_count'])
-            if max_channels < num_rc_channels: num_rc_channels = max_channels
+            num_rc_channels = min(np.amax(data_plot.dataset.data['channel_count']), num_rc_channels)
         legends = []
         for i in range(num_rc_channels):
             channel_names = px4_ulog.get_configured_rc_input_names(i)
@@ -554,6 +564,7 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                          y_start=0, title='Actuator Controls 1 (VTOL in Fixed-Wing mode)',
                          plot_height='small', changed_params=changed_params, topic_instance=1,
                          x_range=x_range)
+                         
     data_plot.add_graph(actuator_controls_1.torque_axes_field_names,
                         colors8[0:3], ['Roll', 'Pitch', 'Yaw'], mark_nan=True)
     data_plot.change_dataset(actuator_controls_1.thrust_sp_topic,
@@ -596,11 +607,27 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                     plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
                     if data_plot.finalize() is not None: plots.append(data_plot)
 
-    else:
+    data_plot.add_graph(['control[0]', 'control[1]', 'control[2]', 'control[3]'],
+                        colors8[0:4], ['Roll', 'Pitch', 'Yaw', 'Thrust'], mark_nan=True)
+    plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
+    if data_plot.finalize() is not None: plots.append(data_plot)
 
-        actuator_output_plots = [(0, "Actuator Outputs (Main)"), (1, "Actuator Outputs (AUX)"),
-                                 (2, "Actuator Outputs (EXTRA)")]
-        for topic_instance, plot_name in actuator_output_plots:
+    # Actuator Motors Outputs (Control Allocator) Lines 615-625 might be deleted later - Joel
+    data_plot = DataPlot(data, plot_config, 'actuator_motors',
+                            y_start=0, title="Actuator Motors", plot_height='small',
+                            changed_params=changed_params, x_range=x_range)
+    num_motor_outputs = 8
+    if data_plot.dataset:
+        data_plot.add_graph(['control['+str(i)+']' for i in range(num_motor_outputs)],
+                            [colors8[i % 8] for i in range(num_motor_outputs)],
+                            ['Control '+str(i) for i in range(num_motor_outputs)],
+                            mark_nan=True)
+    plot_flight_modes_background(data_plot, flight_mode_changes, vtol_states)
+    if data_plot.finalize() is not None: plots.append(data_plot)
+
+    actuator_output_plots = [(0, "Actuator Outputs (Main)"), (1, "Actuator Outputs (AUX)"),
+                             (2, "Actuator Outputs (EXTRA)")]
+    for topic_instance, plot_name in actuator_output_plots:
 
             data_plot = DataPlot(data, plot_config, 'actuator_outputs',
                                  y_start=0, title=plot_name, plot_height='small',
@@ -610,8 +637,8 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
             # only plot if at least one of the outputs is not constant
             all_constant = True
             if data_plot.dataset:
-                max_outputs = np.amax(data_plot.dataset.data['noutputs'])
-                if max_outputs < num_actuator_outputs: num_actuator_outputs = max_outputs
+                num_actuator_outputs = min(np.amax(data_plot.dataset.data['noutputs']),
+                                           num_actuator_outputs)
 
                 for i in range(num_actuator_outputs):
                     output_data = data_plot.dataset.data['output['+str(i)+']']
@@ -654,7 +681,7 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
 
     data_plot.change_dataset('vehicle_imu_status', 3)
     data_plot.add_graph(['accel_vibration_metric'], colors8[3:4],
-                            ['Accel 3 Vibration Level [rad/s]'])
+                            ['Accel 3 Vibration Level [m/s^2]'])
 
     data_plot.add_horizontal_background_boxes(
         ['green', 'orange', 'red'], [4.905, 9.81])
@@ -704,57 +731,64 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     if data_plot.finalize() is not None: plots.append(data_plot)
 
     # FIFO accel
-    if add_virtual_fifo_topic_data(ulog, 'sensor_accel_fifo'):
-        # Raw data
-        data_plot = DataPlot(data, plot_config, 'sensor_accel_fifo_virtual',
-                             y_axis_label='[m/s^2]', title='Raw Acceleration (FIFO)',
-                             plot_height='small', changed_params=changed_params,
-                             x_range=x_range)
-        data_plot.add_graph(['x', 'y', 'z'], colors3, ['X', 'Y', 'Z'])
-        if data_plot.finalize() is not None: plots.append(data_plot)
+    for instance in range(3):
+        if add_virtual_fifo_topic_data(ulog, 'sensor_accel_fifo', instance):
+            # Raw data
+            data_plot = DataPlot(data, plot_config, 'sensor_accel_fifo_virtual',
+                                 y_axis_label='[m/s^2]',
+                                 title=f'Raw Acceleration (FIFO, IMU{instance})',
+                                 plot_height='small', changed_params=changed_params,
+                                 x_range=x_range, topic_instance=instance)
+            data_plot.add_graph(['x', 'y', 'z'], colors3, ['X', 'Y', 'Z'])
+            if data_plot.finalize() is not None: plots.append(data_plot)
 
-        # power spectral density
-        data_plot = DataPlotSpec(data, plot_config, 'sensor_accel_fifo_virtual',
-                                 y_axis_label='[Hz]',
-                                 title='Acceleration Power Spectral Density (FIFO)',
-                                 plot_height='normal', x_range=x_range)
-        data_plot.add_graph(['x', 'y', 'z'], ['X', 'Y', 'Z'])
-        if data_plot.finalize() is not None: plots.append(data_plot)
+            # power spectral density
+            data_plot = DataPlotSpec(data, plot_config, 'sensor_accel_fifo_virtual',
+                                     y_axis_label='[Hz]',
+                                     title=(f'Acceleration Power Spectral Density'
+                                            f'(FIFO, IMU{instance})'),
+                                     plot_height='normal', x_range=x_range, topic_instance=instance)
+            data_plot.add_graph(['x', 'y', 'z'], ['X', 'Y', 'Z'])
+            if data_plot.finalize() is not None: plots.append(data_plot)
 
-        # sampling regularity
-        data_plot = DataPlot(data, plot_config, 'sensor_accel_fifo', y_range=Range1d(0, 25e3),
-                             y_axis_label='[us]',
-                             title='Sampling Regularity of Sensor Data (FIFO)', plot_height='small',
-                             changed_params=changed_params, x_range=x_range)
-        sensor_accel_fifo = ulog.get_dataset('sensor_accel_fifo').data
-        sampling_diff = np.diff(sensor_accel_fifo['timestamp'])
-        min_sampling_diff = np.amin(sampling_diff)
-        plot_dropouts(data_plot.bokeh_plot, ulog.dropouts, min_sampling_diff)
-        data_plot.add_graph([lambda data: ('timediff', np.append(sampling_diff, 0))],
-                            [colors3[2]], ['delta t (between 2 logged samples)'])
-        if data_plot.finalize() is not None: plots.append(data_plot)
+            # sampling regularity
+            data_plot = DataPlot(data, plot_config, 'sensor_accel_fifo', y_range=Range1d(0, 25e3),
+                                 y_axis_label='[us]',
+                                 title=f'Sampling Regularity of Sensor Data (FIFO, IMU{instance})',
+                                 plot_height='small',
+                                 changed_params=changed_params,
+                                 x_range=x_range, topic_instance=instance)
+            sensor_accel_fifo = ulog.get_dataset('sensor_accel_fifo').data
+            sampling_diff = np.diff(sensor_accel_fifo['timestamp'])
+            min_sampling_diff = np.amin(sampling_diff)
+            plot_dropouts(data_plot.bokeh_plot, ulog.dropouts, min_sampling_diff)
+            data_plot.add_graph([lambda data: ('timediff', np.append(sampling_diff, 0))],
+                                [colors3[2]], ['delta t (between 2 logged samples)'])
+            if data_plot.finalize() is not None: plots.append(data_plot)
 
     # FIFO gyro
-    if add_virtual_fifo_topic_data(ulog, 'sensor_gyro_fifo'):
-        # Raw data
-        data_plot = DataPlot(data, plot_config, 'sensor_gyro_fifo_virtual',
-                             y_axis_label='[m/s^2]', title='Raw Gyro (FIFO)',
-                             plot_height='small', changed_params=changed_params,
-                             x_range=x_range)
-        data_plot.add_graph(['x', 'y', 'z'], colors3, ['X', 'Y', 'Z'])
-        data_plot.add_graph([
-            lambda data: ('x', np.rad2deg(data['x'])),
-            lambda data: ('y', np.rad2deg(data['y'])),
-            lambda data: ('z', np.rad2deg(data['z']))],
-                            colors3, ['X', 'Y', 'Z'])
-        if data_plot.finalize() is not None: plots.append(data_plot)
+    for instance in range(3):
+        if add_virtual_fifo_topic_data(ulog, 'sensor_gyro_fifo', instance):
+            # Raw data
+            data_plot = DataPlot(data, plot_config, 'sensor_gyro_fifo_virtual',
+                                 y_axis_label='[deg/s]', title=f'Raw Gyro (FIFO, IMU{instance})',
+                                 plot_height='small', changed_params=changed_params,
+                                 x_range=x_range, topic_instance=instance)
+            data_plot.add_graph(['x', 'y', 'z'], colors3, ['X', 'Y', 'Z'])
+            data_plot.add_graph([
+                lambda data: ('x', np.rad2deg(data['x'])),
+                lambda data: ('y', np.rad2deg(data['y'])),
+                lambda data: ('z', np.rad2deg(data['z']))],
+                                colors3, ['X', 'Y', 'Z'])
+            if data_plot.finalize() is not None: plots.append(data_plot)
 
-        # power spectral density
-        data_plot = DataPlotSpec(data, plot_config, 'sensor_gyro_fifo_virtual',
-                                 y_axis_label='[Hz]', title='Gyro Power Spectral Density (FIFO)',
-                                 plot_height='normal', x_range=x_range)
-        data_plot.add_graph(['x', 'y', 'z'], ['X', 'Y', 'Z'])
-        if data_plot.finalize() is not None: plots.append(data_plot)
+            # power spectral density
+            data_plot = DataPlotSpec(data, plot_config, 'sensor_gyro_fifo_virtual',
+                                     y_axis_label='[Hz]',
+                                     title=f'Gyro Power Spectral Density (FIFO, IMU{instance})',
+                                     plot_height='normal', x_range=x_range, topic_instance=instance)
+            data_plot.add_graph(['x', 'y', 'z'], ['X', 'Y', 'Z'])
+            if data_plot.finalize() is not None: plots.append(data_plot)
 
 
     # magnetic field strength
@@ -775,6 +809,11 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                          x_range=x_range)
     data_plot.add_graph(['current_distance', 'variance'], colors3[0:2],
                         ['Distance', 'Variance'])
+
+    # dist_bottom from estimator
+    data_plot.change_dataset('vehicle_local_position')
+    data_plot.add_graph(['dist_bottom', 'dist_bottom_valid'], colors8[2:4],
+                            ['Estimated Distance Bottom [m]', 'Dist Bottom Valid'])
     if data_plot.finalize() is not None: plots.append(data_plot)
 
 
@@ -786,8 +825,11 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                          title='GPS Uncertainty', y_range=Range1d(0, 40),
                          plot_height='small', changed_params=changed_params,
                          x_range=x_range)
-    data_plot.add_graph(['eph', 'epv', 'satellites_used', 'fix_type'], colors8[::2],
-                        ['Horizontal position accuracy [m]', 'Vertical position accuracy [m]',
+    data_plot.add_graph(['eph', 'epv', 'hdop', 'vdop', 's_variance_m_s',
+                         'satellites_used', 'fix_type'], colors8,
+                         ['Horizontal position accuracy [m]',
+                         'Vertical position accuracy [m]', 'Horizontal dilution of precision [m]',
+                         'Vertical dilution of precision [m]', 'Speed accuracy [m/s]',
                          'Num Satellites used', 'GPS Fix'])
     if data_plot.finalize() is not None: plots.append(data_plot)
 
@@ -829,13 +871,16 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                          y_start=0, title='Power',
                          plot_height='small', changed_params=changed_params,
                          x_range=x_range)
-    data_plot.add_graph(['voltage_v', 'voltage_filtered_v',
+    data_plot.add_graph(['voltage_v',
                          'current_a', lambda data: ('discharged_mah', data['discharged_mah']/100),
                          lambda data: ('remaining', data['remaining']*10)],
-                        colors8[::2]+colors8[1:2],
-                        ['Battery Voltage [V]', 'Battery Voltage filtered [V]',
+                        colors8[0:4],
+                        ['Battery Voltage [V]',
                          'Battery Current [A]', 'Discharged Amount [mAh / 100]',
                          'Battery remaining [0=empty, 10=full]'])
+    data_plot.add_graph(['ocv_estimate', lambda data: ('internal_resistance_estimate',
+                          data['internal_resistance_estimate']*1000)],
+                        colors8[4:6], ['OCV Estimate [V]', 'Internal Resistance Estimate [mOhm]'])
     data_plot.change_dataset('system_power')
     if data_plot.dataset:
         if 'voltage5v_v' in data_plot.dataset.data and \
@@ -843,7 +888,7 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
             data_plot.add_graph(['voltage5v_v'], colors8[7:8], ['5 V'])
         if 'sensors3v3[0]' in data_plot.dataset.data and \
                         np.amax(data_plot.dataset.data['sensors3v3[0]']) > 0.0001:
-            data_plot.add_graph(['sensors3v3[0]'], colors8[5:6], ['3.3 V'])
+            data_plot.add_graph(['sensors3v3[0]'], colors8[6:7], ['3.3 V'])
     if data_plot.finalize() is not None: plots.append(data_plot)
 
     # smart battery power
@@ -859,6 +904,58 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                          'Current [A]', 'Discharged Amount [mAh / 100]',
                          'Avg time to empty'])
     if data_plot.finalize() is not None: plots.append(data_plot)
+
+    # battery status plot
+    battery_fields = [
+        ('max_cell_voltage_delta', 'Max Cell Voltage Delta'),
+        ('voltage_cell_v[0]', 'Cell Voltage 0'),
+        ('voltage_cell_v[1]', 'Cell Voltage 1'),
+        ('voltage_cell_v[2]', 'Cell Voltage 2'),
+    ]
+
+    # Try to get the battery_status dataset (instance 1)
+    dataset = None
+
+    try:
+        dataset = ulog.get_dataset('battery_status', 1).data
+    except Exception:
+        dataset = None
+
+    fields_to_plot = []
+    legends_to_plot = []
+    colors_to_plot = []
+
+    for idx, (field, legend) in enumerate(battery_fields):
+        if dataset and field in dataset:
+            fields_to_plot.append(field)
+            legends_to_plot.append(legend)
+            colors_to_plot.append(colors8[idx % len(colors8)])
+
+    # --- Main battery fields plot ---
+    if fields_to_plot:
+        data_plot = DataPlot(
+            data, plot_config, 'battery_status', topic_instance=1,
+            y_start=0, title='Cell Volatage Data',
+            plot_height='small', changed_params=changed_params,
+            x_range=x_range
+        )
+        data_plot.add_graph(fields_to_plot, colors_to_plot, legends_to_plot)
+        if data_plot.finalize() is not None:
+            plots.append(data_plot)
+    else:
+        plots.append(Div(text="<b>No battery status fields available in this log.</b>"))
+
+    # --- Cycle Count plot (separate) ---
+    if dataset and 'cycle_count' in dataset:
+        data_plot = DataPlot(
+            data, plot_config, 'battery_status', topic_instance=1,
+            y_start=0, title='Battery Cycle Count',
+            plot_height='small', changed_params=changed_params,
+            x_range=x_range
+        )
+        data_plot.add_graph(['cycle_count'], [colors8[4]], ['Cycle Count'])
+        if data_plot.finalize() is not None:
+            plots.append(data_plot)
 
     #Temperature
     data_plot = DataPlot(data, plot_config, 'sensor_baro',
@@ -1008,6 +1105,12 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
     param_changes_button.on_click(param_changes_button_clicked)
 
 
+    user_agent = curdoc().session_context.request.headers.get("User-Agent", "")
+    is_mobile = re.search(r'Mobile|iP(hone|od|ad)|Android|BlackBerry|'
+            r'IEMobile|Kindle|NetFront|Silk-Accelerated|(hpw|web)OS|Fennec|'
+            r'Minimo|Opera M(obi|ini)|Blazer|Dolfin|'
+            r'Dolphin|Skyfire|Zune', user_agent)
+
     jinja_plot_data = []
     for i in range(len(plots)):
         if plots[i] is None:
@@ -1026,6 +1129,9 @@ def generate_plots(ulog, px4_ulog, db_data, vehicle_data, link_to_3d_page,
                 'fragment': fragment,
                 'title': plot_title
                 })
+        if is_mobile is not None and hasattr(plots[i], 'toolbar'):
+            # Disable panning on mobile by default
+            plots[i].toolbar.active_drag = None
 
 
     # changed parameters
