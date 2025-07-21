@@ -19,6 +19,7 @@ data/img/*
 data/app_data
 data/certbot
 
+env/
 /.idea
 
 app/private_key/private_key.pem
