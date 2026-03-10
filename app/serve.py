@@ -27,6 +27,7 @@ from tornado_handlers.bulk_upload import BulkUploadHandler, save_uploaded_log
 from tornado_handlers.upload import UploadHandler
 from tornado_handlers.browse import BrowseHandler, BrowseDataRetrievalHandler
 from tornado_handlers.edit_entry import EditEntryHandler
+from tornado_handlers.delete_log import DeleteLogHandler
 from tornado_handlers.db_info_json import DBInfoHandler
 from tornado_handlers.three_d import ThreeDHandler
 from tornado_handlers.radio_controller import RadioControllerHandler
@@ -142,7 +143,8 @@ extra_patterns = [
     (r'/error_label', UpdateErrorLabelHandler),
     (r"/stats", RedirectHandler, {"url": "/plot_app?stats=1"}),
     (r'/overview_img/(.*)', StaticFileHandler, {'path': get_overview_img_filepath()}),
-    (r'/nas_ingest', NASIngestHandler)
+    (r'/nas_ingest', NASIngestHandler),
+    (r'/delete_log', DeleteLogHandler),
 ]
 
 # TODO: DON'T DO THIS

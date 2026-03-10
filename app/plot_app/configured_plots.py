@@ -145,6 +145,7 @@ def generate_plots(
         db_data,
         link_to_3d_page,
         additional_links=[("Open PID Analysis", link_to_pid_analysis_page)],
+        log_id=curdoc().template_variables.get('log_id', None),
     )
 
     # info text on top (logging duration, max speed, ...)
