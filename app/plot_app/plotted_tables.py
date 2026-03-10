@@ -50,10 +50,11 @@ def _get_vtol_means_per_mode(vtol_states, timestamps, data):
 
 
 def get_heading_html(ulog, px4_ulog, db_data, link_to_3d_page,
-                     additional_links=None, title_suffix=''):
+                     additional_links=None, title_suffix='', log_id=None):
     """
     Get the html (as string) for the heading information (plots title)
     :param additional_links: list of (label, link) tuples
+    :param log_id: log ID used for the delete button
     """
     sys_name = ''
     if 'sys_name' in ulog.msg_info_dict:
@@ -72,11 +73,21 @@ def get_heading_html(ulog, px4_ulog, db_data, link_to_3d_page,
             added_links += ("<a class='btn btn-outline-primary' href='"+
                             link+"'>"+label+"</a>")
 
+    delete_button = ''
+    if log_id is not None:
+        delete_button = (
+            "<form method='POST' action='/delete_log' style='display:inline;' "
+            "onsubmit=\"return confirm('Are you sure you want to delete this log? "
+            "This cannot be undone.');\">"
+            "<input type='hidden' name='log' value='" + escape(log_id) + "'>"
+            "<button type='submit' class='btn btn-outline-danger'>Delete Log</button>"
+            "</form>")
+
     if title_suffix != '': title_suffix = ' - ' + title_suffix
 
     title_html = ("<table width='100%'><tr><td><h3>"+sys_name + px4_ulog.get_mav_type()+
                   title_suffix+"</h3></td><td align='right'>" + link_to_3d +
-                  added_links+"</td></tr></table>")
+                  added_links + " " + delete_button+"</td></tr></table>")
     if db_data.description != '':
         title_html += "<h5>"+db_data.description+"</h5>"
     return title_html
